@@ -35,6 +35,12 @@ jobs:
         run: gcc -c -O2 -Wall -Wextra -Werror -o /tmp/rt-gcc.o runtime/aether_rt.c
       - name: Compile with clang
         run: clang -c -O2 -Wall -Wextra -Werror -o /tmp/rt-clang.o runtime/aether_rt.c
+      - name: Build a C++ fixture through clang++
+        run: |
+          ./runtime/aether-cc --cc clang++ -o /tmp/cxx_fix fixtures/cxx_container.cpp
+          printf 'CXXR\x02' | /tmp/cxx_fix
+          # The planted out-of-range access must terminate the process.
+          printf 'CXXR\xff' | /tmp/cxx_fix && exit 1 || true
       - name: Build a fixture and check it runs standalone
         run: |
           ./runtime/aether-cc -o /tmp/ladder fixtures/coverage_ladder.c

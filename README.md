@@ -91,6 +91,37 @@ skills, three agents and a health-check hook, so a campaign can be designed,
 run and interpreted from a conversation. See
 [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md).
 
+## What it can fuzz
+
+Every row below was established by building the target and running a campaign
+against it, not inferred from the design.
+
+| Language | How | Coverage guidance | Verified |
+|---|---|---|---|
+| C | `aether-cc` | edges + comparison log | campaign, finding reproduced 5/5 |
+| C++ | `aether-cc --cc clang++` | edges + comparison log, virtual calls included | campaign, finding reproduced 5/5 |
+| Rust | `rustc -C passes=sancov-module -C link-arg=aether_rt.o -C panic=abort` | edges + comparison log | campaign, finding reproduced 5/5 |
+| Objective-C, and other clang front ends | `aether-cc --cc clang` | same as C | not tried |
+| Python, Node, Ruby, Java, Go, any executable | `instrumentation = "none"` | **none** — exit status, output and oracles only | Python campaign, finding reproduced 5/5 |
+
+The target must be a **local executable** that takes one input per run on stdin
+or as a file path argument. Three target shapes are accepted: a plain
+executable, a newline-delimited command sequence (`stateful-stdio`), and a pair
+of executables compared against each other (`differential`).
+
+**A managed language's uncaught exception is not a crash.** Python exits 1,
+Rust panics with 101 — and a non-zero exit is how a correct parser rejects
+malformed input, so AETHER does not treat it as a defect. An interpreted target
+needs a harness that turns an *unexpected* exception into `SIGABRT` while
+letting intended rejections exit non-zero; that distinction is the harness's
+job and cannot be inferred. Recipes are in
+[docs/USAGE.md](docs/USAGE.md#targets-that-are-not-c), and the measurement is in
+[DECISIONS.md D21](docs/DECISIONS.md).
+
+Out of reach: network services (the scope policy validates authorisation but no
+network backend exists), libraries without an executable harness, JVM and .NET
+bytecode coverage, and Go coverage.
+
 ## What it does not do
 
 Stated here rather than left to be discovered:
@@ -128,7 +159,7 @@ Stated here rather than left to be discovered:
 runtime/              C coverage runtime and the aether-cc build wrapper
 crates/aether-core/   engine: exec, feedback, corpus, strategy, intel, evidence, runtime
 crates/aether-cli/    the aether command
-fixtures/             11 self-contained C targets with known behaviour
+fixtures/             11 C and 1 C++ self-contained targets with known behaviour
 integrations/         Claude Code plugin and MCP server
 docs/                 architecture, decisions, threat model, usage, benchmarking
 ```
@@ -136,7 +167,7 @@ docs/                 architecture, decisions, threat model, usage, benchmarking
 ## Tests
 
 ```bash
-cargo test                                            # 437 tests
+cargo test                                            # 527 tests
 cargo test --release --test optimizer_tuning -- --nocapture   # solver sweeps
 ```
 

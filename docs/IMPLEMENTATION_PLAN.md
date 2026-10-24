@@ -141,7 +141,7 @@ classical simulated annealing. Recorded in
 | Item | Status |
 | --- | --- |
 | Unit tests | done (457) |
-| Integration tests | done (`exec_native`, 18) |
+| Integration tests | done (`exec_native`, 21, including the C++ build path, virtual-call coverage and the `--opt` regression) |
 | End-to-end tests | done (`campaign_e2e`, 19, including three pooled and three oracle) |
 | Security tests | done (`security`, 23, including five for the oracle and worker surfaces) |
 | Benchmark experiments | A–E and G implemented, F in the sweep harness |
@@ -153,12 +153,12 @@ classical simulated annealing. Recorded in
 | Suite | Count | Result |
 | --- | --- | --- |
 | `aether-core` unit | 457 | pass |
-| `exec_native` integration | 18 | pass |
+| `exec_native` integration | 21 | pass |
 | `campaign_e2e` end-to-end | 19 | pass |
 | `security` | 23 | pass |
 | `optimizer_tuning` | 6 | pass |
 | `perf_probe` | 1 | pass |
-| **Total** | **524** | **pass** |
+| **Total** | **527** | **pass** |
 
 `cargo clippy --all-targets` reports no warnings; `cargo fmt --check` is clean.
 

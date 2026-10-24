@@ -211,6 +211,28 @@ void __sanitizer_cov_trace_div4(uint32_t v) { (void)v; }
 void __sanitizer_cov_trace_div8(uint64_t v) { (void)v; }
 void __sanitizer_cov_trace_gep(uintptr_t v) { (void)v; }
 
+/* Indirect-call hook, emitted at -sanitizer-coverage-level=4.
+ *
+ * Recorded as an edge rather than dropped: which target a call site actually
+ * dispatched to is real control flow, and it is the only signal that
+ * distinguishes two paths through a C++ virtual call or a Rust `dyn Trait`
+ * method. Without this the two look identical to the edge map.
+ *
+ * The callee address is folded in the same way as the guard form so it shares
+ * one map, and `g_prev_loc` is left alone: the branch that follows the call
+ * should still be attributed to the call site, not to the callee's address.
+ * Rust needs this symbol to link at all once level 4 is on, which is how it
+ * came to be implemented. */
+void __sanitizer_cov_trace_pc_indir(uintptr_t callee)
+{
+    if (!g_map) return;
+    uint32_t cur = (uint32_t)callee;
+    cur = (cur >> 4) ^ (cur << 8);
+    uint32_t idx = (cur ^ g_prev_loc) & AETHER_MAP_MASK;
+    uint8_t v = g_map[idx];
+    if (v != 255) g_map[idx] = (uint8_t)(v + 1);
+}
+
 /* ---------------------------------------------------------------------- */
 /* Fork server                                                             */
 /* ---------------------------------------------------------------------- */

@@ -544,3 +544,80 @@ Sharing gives each worker four times the evidence at no measurable cost.
 **What is deliberately not shared.** Per-execution feedback, the semantic
 providers' state, and the comparison-token store all stay worker-local. Sharing
 those would mean a lock on the hot path, which is exactly what D14 avoids.
+
+## D21 — Which languages this engine can actually fuzz, established by running it
+
+Asked what AETHER can fuzz, I ran it rather than reasoning from the design, and
+found two real gaps in the process.
+
+### The gaps that were there
+
+**`aether-cc` could not build C++ at all.** `--cc clang++` was rejected by the
+argument validator, and `--cc clang` on a `.cpp` source compiled but failed to
+link: `undefined reference to operator delete(void*)` and
+`__gxx_personality_v0`. A fuzzing engine that cannot drive C++ is a much
+smaller tool than this one claimed to be, and nothing said so.
+
+Fixed by accepting `clang++` and `g++`, keying the coverage-flag choice on the
+compiler *family* rather than the exact driver, and — the part that matters —
+keeping the coverage runtime compiled with the matching **C** compiler while
+the C++ driver does the link. Compiling `aether_rt.c` as C++ would mangle the
+callback symbols and the link would fail on every one of them.
+
+**`--opt` was parsed and then ignored.** The compile line hard-coded `-O1`, so
+the flag had no effect and the `InstrumentedO0` fixture variant was identical
+to the default. The guard counts the file documents were therefore
+undemonstrable through the tool. With the flag honoured: `-O0` 19 guards, `-O1`
+10, `-O2` 10 on `coverage_ladder` — exactly the figures the comment claimed.
+
+**Indirect calls were not recorded.** Rust at
+`-sanitizer-coverage-level=4` will not link without
+`__sanitizer_cov_trace_pc_indir`, which is how this came up. It is now
+implemented and folds the callee into the edge map, because which
+implementation a virtual call dispatched to is real control flow: without it,
+two paths through one C++ virtual call or Rust `dyn Trait` method produce an
+identical map. `g_prev_loc` is deliberately left unchanged so the branch after
+the call is still attributed to the call site.
+
+### What was then verified, by running a campaign
+
+| Language | Build | Instrumentation measured | Result |
+|---|---|---|---|
+| C | `aether-cc` | edges + cmplog + fork server | reproducible finding, 5/5 |
+| C++ | `aether-cc --cc clang++` | 54 guards, 18 comparisons, fork server | reproducible finding, 5/5 |
+| Rust | `rustc -C passes=sancov-module` + our runtime object | 28 guards, 8 comparisons, fork server | reproducible finding, 5/5, 1343 exec/s |
+| Python | black-box, `instrumentation = "none"` | none, by definition | reproducible finding, 5/5, 31 exec/s |
+
+### The constraint nobody would guess
+
+**A managed language's uncaught exception is not a crash to AETHER.** Python
+exits 1, Rust panics with 101, Java with 1. `ExitClass::NonZeroExit` is
+deliberately *not* a candidate failure — a parser rejecting malformed input
+exits non-zero and that is correct behaviour, not a defect. Treating every
+non-zero exit as a finding would bury real defects under valid rejections.
+
+So an interpreted or managed target needs the defect turned into a signal:
+
+- Rust: `-C panic=abort`, which makes a panic `SIGABRT`.
+- Python, Node, Ruby: a harness that catches unexpected exceptions and calls
+  `os.abort()`, while letting intended rejections exit non-zero. That
+  distinction is the harness's job and cannot be inferred by the engine.
+- Or declare an invariant — though note the invariant rules read stdout and the
+  exit code, **not stderr**, so a traceback on stderr needs redirecting into
+  stdout to be matchable.
+
+This was measured: the Python target's `IndexError` was invisible until the
+harness aborted on it, after which AETHER found and reproduced it 5/5.
+
+### What is still out of reach
+
+- **Network services.** The scope policy validates authorisation for network
+  targets and records a rate limit, but no network execution backend exists, so
+  nothing is sent. Documented in the threat model as validated-not-applied.
+- **Libraries without a harness.** AETHER drives processes, not function calls.
+  A library needs a small executable that reads stdin and calls into it. The
+  libFuzzer adapter would cover in-process harnesses and is unverified.
+- **JVM and .NET bytecode coverage.** Reachable black-box only; their coverage
+  instrumentation is not SanitizerCoverage and no adapter exists.
+- **Go.** `go build` does not expose SanitizerCoverage; `libfuzzer` mode via
+  cgo might work and has not been tried, so nothing is claimed.

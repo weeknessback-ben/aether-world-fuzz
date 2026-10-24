@@ -45,6 +45,9 @@ pub enum Build {
     AsanOracle,
     /// No instrumentation at all, for the black-box path.
     Plain,
+    /// clang++ with coverage, for a `.cpp` source. The coverage runtime stays
+    /// compiled as C; see the note at the top of `runtime/aether-cc`.
+    Cxx,
 }
 
 impl Build {
@@ -54,6 +57,7 @@ impl Build {
             Build::InstrumentedO0 => "inst0",
             Build::AsanOracle => "asan",
             Build::Plain => "plain",
+            Build::Cxx => "cxx",
         }
     }
 
@@ -63,6 +67,7 @@ impl Build {
             Build::InstrumentedO0 => vec!["--opt", "-O0"],
             Build::AsanOracle => vec!["--cc", "gcc", "--sanitizer", "address"],
             Build::Plain => vec!["--no-instrument"],
+            Build::Cxx => vec!["--cc", "clang++"],
         }
     }
 }
@@ -74,7 +79,8 @@ static BUILD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// `stem` is the fixture file name without `.c`, e.g. `"crash_magic"`.
 pub fn fixture(stem: &str, build: Build) -> PathBuf {
     let out = cache_dir().join(format!("{stem}.{}", build.suffix()));
-    let src = fixtures_dir().join(format!("{stem}.c"));
+    let ext = if build == Build::Cxx { "cpp" } else { "c" };
+    let src = fixtures_dir().join(format!("{stem}.{ext}"));
     assert!(src.exists(), "no such fixture source: {}", src.display());
 
     // One compile at a time: tests run in parallel and would otherwise race

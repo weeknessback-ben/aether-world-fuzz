@@ -155,6 +155,84 @@ it stops at its next execution boundary. Stored corpus and findings are kept.
 Status output distinguishes **not measured** from zero. `edges: not measured`
 means the target is uninstrumented; it does not mean no code was reached.
 
+## Targets that are not C
+
+### C++
+
+```bash
+./runtime/aether-cc --cc clang++ -o build/parser src/parser.cpp
+```
+
+Full instrumentation: edges, comparison log, fork server, and indirect calls so
+two paths through one virtual call site are distinguishable. The coverage
+runtime stays compiled as C — it has to, or its callback symbols would be
+mangled and nothing would link.
+
+`g++` works too, with the coarser `trace-pc` coverage and no comparison log,
+because gcc has neither `trace-pc-guard` nor `trace-cmp`.
+
+### Rust
+
+There is no wrapper for this yet; the flags are:
+
+```bash
+clang -g -O2 -I runtime -c runtime/aether_rt.c -o /tmp/aether_rt.o
+
+rustc -C opt-level=1 -C debuginfo=1 -C panic=abort   -C llvm-args=-sanitizer-coverage-level=4   -C llvm-args=-sanitizer-coverage-trace-pc-guard   -C llvm-args=-sanitizer-coverage-trace-compares   -C llvm-args=-sanitizer-coverage-prune-blocks=0   -C passes=sancov-module -C link-arg=/tmp/aether_rt.o   -o build/target src/main.rs
+```
+
+`-C panic=abort` is not optional: without it a panic exits 101, and a non-zero
+exit is not a finding (see below). Verified on stable rustc: 28 guards, 8
+comparisons recorded, 1343 executions per second, planted panic reproduced 5/5.
+
+### Python, Node, Ruby, Java, Go — black box
+
+No coverage is available, so exploration is blind and you keep only the exit
+status, the output, and the oracles. Point the binary at the interpreter:
+
+```toml
+[target]
+binary = "/usr/bin/python3"
+args = ["harness.py"]
+input_mode = "stdin"
+instrumentation = "none"
+use_fork_server = false     # the fork server needs our runtime in the process
+timeout_ms = 5000           # interpreter startup dominates; be generous
+[feedback]
+providers = ["exit-class", "sanitizer"]
+```
+
+**The part that catches people out.** AETHER does not treat a non-zero exit as
+a defect, because that is exactly how a correct parser rejects malformed input.
+An uncaught Python exception exits 1 and is therefore invisible. The harness
+has to make the distinction:
+
+```python
+import os, sys, traceback
+
+def main():
+    data = sys.stdin.buffer.read()
+    ...
+    return 1              # an intended rejection: still exit non-zero
+
+try:
+    sys.exit(main())
+except SystemExit:
+    raise
+except BaseException:
+    traceback.print_exc(file=sys.stderr)
+    sys.stderr.flush()
+    os.abort()            # unexpected: SIGABRT, which AETHER sees as a crash
+```
+
+Measured: the planted `IndexError` was invisible without that `os.abort()`, and
+reproduced 5/5 with it — at 31 executions per second, since every run pays
+interpreter startup.
+
+The alternative is a declared invariant, but note that the invariant rules read
+**stdout and the exit code, not stderr**, so a traceback has to be redirected
+into stdout to be matchable.
+
 ## Several workers
 
 ```bash

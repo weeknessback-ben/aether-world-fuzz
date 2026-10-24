@@ -102,7 +102,7 @@ result or a bug that a change would reintroduce.
 | `crates/aether-core/src/oracle/` | Differential and metamorphic checks, budgeted |
 | `crates/aether-core/src/runtime/` | Campaign loop, checkpoints, worker pool |
 | `crates/aether-cli/` | The `aether` command. No SQL — use `query` |
-| `fixtures/` | 11 C targets with known behaviour |
+| `fixtures/` | 11 C and 1 C++ target with known behaviour |
 | `integrations/claude-code/` | Plugin and MCP server. No fuzzing logic |
 
 ## Adding things
@@ -119,6 +119,15 @@ by convention.
 **An execution backend:** implement `Executor`, add an `AdapterDeclaration`
 with its full contract, and a detection probe. Mark `verified: false` unless it
 has actually been driven against the real engine.
+
+**A language:** the engine drives processes, so what matters is the build. C,
+C++ and Rust are verified end to end and the recipes are in
+[docs/USAGE.md](docs/USAGE.md#targets-that-are-not-c). Two things bite:
+`aether_rt.c` must be compiled by a **C** compiler even when the target links
+with a C++ driver, or its callback symbols mangle and nothing links; and a
+managed language's uncaught exception exits non-zero, which is *not* a
+candidate failure, so the harness has to turn an unexpected one into `SIGABRT`.
+See [D21](docs/DECISIONS.md).
 
 **A CLI command:** add it to `main.rs`, implement in `commands.rs`, support
 `--json`. No SQL — extend `aether_core::query` instead.

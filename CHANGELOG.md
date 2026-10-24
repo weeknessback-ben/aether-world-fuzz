@@ -28,8 +28,33 @@ Versioning is [semantic](https://semver.org/).
   both oracles with their requirements.
 - `aether_campaign_start` (MCP) accepts `workers`.
 
+- **C++ targets.** `aether-cc` accepts `clang++` and `g++`, keeping the coverage
+  runtime compiled as C so its callback symbols survive the C++ link. Verified
+  end to end: 54 guards, 18 comparisons, planted defect reproduced 5/5.
+  (D21)
+- **Indirect-call coverage** (`__sanitizer_cov_trace_pc_indir`), so two paths
+  through one C++ virtual call or Rust `dyn Trait` method are distinguishable
+  instead of producing an identical map. Also what Rust needs to link at
+  `-sanitizer-coverage-level=4`.
+- **A C++ fixture** (`cxx_container.cpp`) exercising the C++ build path and
+  virtual dispatch, plus a `Cxx` build variant in the test harness and a CI
+  step, because this path was broken and nothing noticed.
+- Verified language support, by running campaigns rather than reasoning about
+  it: C, C++, Rust (coverage-guided) and Python (black box) each found and
+  reproduced a planted defect 5/5. Recipes in `docs/USAGE.md`, including the
+  harness an interpreted target needs — a managed language's uncaught
+  exception exits non-zero, and a non-zero exit is deliberately not a finding.
+
 ### Fixed
 
+- **`aether-cc` could not build C++ at all.** `--cc clang++` was rejected by
+  the argument validator and `--cc clang` on a `.cpp` source failed to link
+  libstdc++. Found by trying it.
+- **`--opt` was parsed and then ignored** — the compile line hard-coded `-O1`,
+  so the flag did nothing and the `InstrumentedO0` fixture variant was
+  identical to the default. With it honoured, `coverage_ladder` registers 19
+  guards at `-O0` against 10 at `-O1`: exactly the figures the file documented
+  and could not demonstrate. A regression test now asserts the two differ.
 - **The bandit scheduler was barely better than uniform allocation.** Two
   defects, both found by reading a real campaign's own report, where the
   strategy that found 40 of 44 new edges received the smallest share of the

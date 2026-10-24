@@ -414,3 +414,111 @@ fn fork_server_is_refused_for_file_arg_mode_at_config_time() {
     let e = Config::from_toml_str(&toml).unwrap_err();
     assert!(e.to_string().contains("fork server requires"), "{e}");
 }
+
+/// A spec for a fixture binary already on disk.
+fn spec_for(binary: &std::path::Path) -> TargetSpec {
+    let cfg = Config::from_toml_str(&config_toml_for(binary, "")).expect("fixture config");
+    TargetSpec::from_config(&cfg.target, &ScopePolicy::default(), 16 * 1024).expect("spec")
+}
+
+/// `aether-cc` must build and instrument C++, not only C.
+///
+/// Regression test for a real gap: `--cc clang++` was rejected by the argument
+/// validator, and `--cc clang` on a `.cpp` source compiled but failed to link
+/// the C++ standard library. A fuzzing engine that cannot drive C++ is a much
+/// smaller tool than this one claimed to be.
+#[test]
+fn a_cxx_target_is_built_instrumented_and_executable() {
+    let bin = fixture("cxx_container", Build::Cxx);
+    let spec = spec_for(&bin);
+    let scratch = Scratch::new("cxx-exec");
+    let mut exec = NativeExecutor::new(spec, &scratch.path).expect("executor");
+
+    assert!(
+        exec.capabilities().edge_coverage,
+        "a C++ build through aether-cc must carry edge coverage"
+    );
+    assert!(
+        exec.capabilities().comparison_log,
+        "clang++ supports trace-cmp, so the comparison log must be available"
+    );
+
+    // A valid input runs cleanly through a virtual call.
+    let ok = exec.run(b"CXXR\x02").expect("run");
+    assert_eq!(ok.class, ExitClass::Ok, "stderr: {}", ok.stderr_str());
+    assert!(
+        ok.coverage.is_some(),
+        "an instrumented C++ binary must report a coverage map"
+    );
+    assert!(
+        !ok.cmp_entries.is_empty(),
+        "the C++ build should record comparison operands"
+    );
+
+    // The planted out-of-range access terminates the process.
+    let bad = exec.run(b"CXXR\xff").expect("run");
+    assert_eq!(
+        bad.class,
+        ExitClass::Crash,
+        "an unhandled C++ exception must surface as a crash, got {:?}: {}",
+        bad.class,
+        bad.stderr_str()
+    );
+}
+
+/// The two virtual implementations must be distinguishable in coverage.
+///
+/// This is what the indirect-call hook buys. Without
+/// `__sanitizer_cov_trace_pc_indir` recording the callee, two paths through the
+/// same virtual call site produce the same map and the engine cannot tell it
+/// reached a new implementation.
+#[test]
+fn a_virtual_call_target_shows_up_in_coverage() {
+    let bin = fixture("cxx_container", Build::Cxx);
+    let spec = spec_for(&bin);
+    let scratch = Scratch::new("cxx-vcall");
+    let mut exec = NativeExecutor::new(spec, &scratch.path).expect("executor");
+
+    let reader = exec.run(b"CXXR\x02").expect("run reader");
+    let writer = exec.run(b"CXXW\x02").expect("run writer");
+    assert_eq!(reader.class, ExitClass::Ok);
+    assert_eq!(writer.class, ExitClass::Ok);
+
+    let (a, b) = (
+        reader.coverage.expect("reader map"),
+        writer.coverage.expect("writer map"),
+    );
+    assert_ne!(
+        a.as_ref(),
+        b.as_ref(),
+        "dispatching to a different implementation must change the coverage map"
+    );
+}
+
+/// `--opt` must actually reach the compile step.
+///
+/// Regression test for a silently ignored flag: `--opt` was parsed into a
+/// variable that the compile line never used, so every build was `-O1` and the
+/// `InstrumentedO0` fixture variant was identical to the default. The guard
+/// counts below are the measurement that `runtime/aether-cc` documents and
+/// could not previously demonstrate.
+#[test]
+fn the_optimisation_level_changes_the_guard_count() {
+    let o1 = fixture("coverage_ladder", Build::Instrumented);
+    let o0 = fixture("coverage_ladder", Build::InstrumentedO0);
+
+    let guards = |p: &std::path::Path, tag: &str| {
+        let scratch = Scratch::new(tag);
+        let mut e = NativeExecutor::new(spec_for(p), &scratch.path).expect("executor");
+        e.run(b"probe").expect("run");
+        e.shm_guard_count().expect("guard count")
+    };
+
+    let g1 = guards(&o1, "opt-o1");
+    let g0 = guards(&o0, "opt-o0");
+    assert!(
+        g0 > g1,
+        "-O0 should register more guards than -O1 (got {g0} and {g1}); if they are \
+         equal the --opt flag is being ignored again"
+    );
+}

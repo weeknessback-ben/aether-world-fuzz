@@ -2,7 +2,7 @@
 # aether-cc - build a target with AETHER coverage instrumentation.
 #
 # Usage:
-#   aether-cc [--cc clang|gcc] [--sanitizer none|address|undefined]
+#   aether-cc [--cc clang|gcc|clang++|g++] [--sanitizer none|address|undefined]
 #             [--cmplog|--no-cmplog] [--no-instrument] [--opt -O0|-O1|-O2]
 #             -o OUTPUT SOURCE... [-- extra compiler flags]
 #
@@ -15,10 +15,17 @@
 # -fsanitize-coverage to the link line makes clang pull in its sanitizer
 # runtime libraries, which are not shipped with every clang install. AETHER
 # supplies its own runtime instead, so only the compile step is instrumented.
+#
+# C++ is driven through clang++ or g++. The coverage runtime stays C: it is C
+# source, and the instrumented code calls its callbacks by their C symbol
+# names, so it is compiled with the matching C compiler and linked by the C++
+# driver. Compiling it as C++ would mangle those symbols and the link would
+# fail on every callback.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CC_CHOICE="clang"
+STD=""
 SANITIZER="none"
 CMPLOG=1
 INSTRUMENT=1
@@ -32,6 +39,7 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cc)            CC_CHOICE="$2"; shift 2 ;;
+    --std)           STD="$2"; shift 2 ;;
     --sanitizer)     SANITIZER="$2"; shift 2 ;;
     --cmplog)        CMPLOG=1; shift ;;
     --no-cmplog)     CMPLOG=0; shift ;;
@@ -63,9 +71,16 @@ case "$SANITIZER" in
   *) echo "aether-cc: unsupported --sanitizer '$SANITIZER'" >&2; exit 2 ;;
 esac
 
+# The C compiler matching the chosen driver, for building the runtime.
+case "$CC_CHOICE" in
+  clang|clang++) CC_FAMILY="clang"; RT_CC="clang" ;;
+  gcc|g++)       CC_FAMILY="gcc";   RT_CC="gcc" ;;
+  *) echo "aether-cc: unsupported --cc '$CC_CHOICE'" >&2; exit 2 ;;
+esac
+
 COV_FLAGS=()
 if [[ "$INSTRUMENT" == "1" ]]; then
-  case "$CC_CHOICE" in
+  case "$CC_FAMILY" in
     clang)
       # no-prune keeps the guards LLVM would otherwise drop in dominated
       # blocks. Measured on fixtures/coverage_ladder.c it roughly doubles the
@@ -83,7 +98,6 @@ if [[ "$INSTRUMENT" == "1" ]]; then
       # edges from return addresses: coarser, and with no comparison log.
       COV_FLAGS=(-fsanitize-coverage=trace-pc)
       ;;
-    *) echo "aether-cc: unsupported --cc '$CC_CHOICE'" >&2; exit 2 ;;
   esac
 fi
 
@@ -94,7 +108,8 @@ OBJS=()
 i=0
 for src in "${SRCS[@]}"; do
   obj="$TMPD/src_$i.o"; i=$((i + 1))
-  "$CC_CHOICE" -g -O1 -fno-omit-frame-pointer \
+  "$CC_CHOICE" -g "$OPT" -fno-omit-frame-pointer \
+    ${STD:+"-std=$STD"} \
     ${COV_FLAGS[@]+"${COV_FLAGS[@]}"} ${SAN_FLAGS[@]+"${SAN_FLAGS[@]}"} \
     ${EXTRA[@]+"${EXTRA[@]}"} -I"$HERE" -c "$src" -o "$obj"
   OBJS+=("$obj")
@@ -104,7 +119,8 @@ done
 RT_OBJ=""
 if [[ "$INSTRUMENT" == "1" ]]; then
   RT_OBJ="$TMPD/aether_rt.o"
-  "$CC_CHOICE" -g -O2 -I"$HERE" -c "$HERE/aether_rt.c" -o "$RT_OBJ"
+  # Always the C compiler: see the note at the top of this file.
+  "$RT_CC" -g -O2 -I"$HERE" -c "$HERE/aether_rt.c" -o "$RT_OBJ"
 fi
 
 # Link without coverage flags so no sanitizer-coverage runtime is required.
