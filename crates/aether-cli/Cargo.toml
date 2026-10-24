@@ -1,0 +1,19 @@
+[package]
+name = "aether-cli"
+description = "AETHER command line interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "aether"
+path = "src/main.rs"
+
+[dependencies]
+aether-core = { path = "../aether-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }

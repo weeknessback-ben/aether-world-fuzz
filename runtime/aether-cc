@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# aether-cc - build a target with AETHER coverage instrumentation.
+#
+# Usage:
+#   aether-cc [--cc clang|gcc] [--sanitizer none|address|undefined]
+#             [--cmplog|--no-cmplog] [--no-instrument] [--opt -O0|-O1|-O2]
+#             -o OUTPUT SOURCE... [-- extra compiler flags]
+#
+# Produces an executable that reports edge coverage and comparison operands
+# through the shared memory region named by AETHER_SHM_PATH, and serves an
+# AETHER fork server when AETHER_FORKSRV is set. With neither variable set the
+# binary behaves like an ordinary program, so fixtures stay runnable by hand.
+#
+# Compilation and linking are deliberately separate steps: passing
+# -fsanitize-coverage to the link line makes clang pull in its sanitizer
+# runtime libraries, which are not shipped with every clang install. AETHER
+# supplies its own runtime instead, so only the compile step is instrumented.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CC_CHOICE="clang"
+SANITIZER="none"
+CMPLOG=1
+INSTRUMENT=1
+# -O0 gives the most sensitive coverage gradient (19 guards vs 10 at -O1 on
+# the ladder fixture) at the cost of throughput; -O1 is the default balance.
+OPT="-O1"
+OUT=""
+SRCS=()
+EXTRA=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cc)            CC_CHOICE="$2"; shift 2 ;;
+    --sanitizer)     SANITIZER="$2"; shift 2 ;;
+    --cmplog)        CMPLOG=1; shift ;;
+    --no-cmplog)     CMPLOG=0; shift ;;
+    --no-instrument) INSTRUMENT=0; shift ;;
+    --opt)           OPT="$2"; shift 2 ;;
+    -o)              OUT="$2"; shift 2 ;;
+    -h|--help)       sed -n '2,17p' "$0"; exit 0 ;;
+    --)              shift; while [[ $# -gt 0 ]]; do EXTRA+=("$1"); shift; done ;;
+    -*)              EXTRA+=("$1"); shift ;;
+    *)               SRCS+=("$1"); shift ;;
+  esac
+done
+
+if [[ -z "$OUT" || ${#SRCS[@]} -eq 0 ]]; then
+  echo "aether-cc: need -o OUTPUT and at least one source file" >&2
+  exit 2
+fi
+
+# A sanitizer build needs a compiler whose sanitizer runtime is actually
+# present. gcc ships libasan/libubsan with the compiler package; a clang
+# install may lack libclang_rt.*, in which case the link fails loudly rather
+# than producing a binary with no oracle.
+SAN_FLAGS=()
+case "$SANITIZER" in
+  none) ;;
+  address)   SAN_FLAGS=(-fsanitize=address   -fno-omit-frame-pointer) ;;
+  undefined) SAN_FLAGS=(-fsanitize=undefined -fno-omit-frame-pointer
+                        -fno-sanitize-recover=all) ;;
+  *) echo "aether-cc: unsupported --sanitizer '$SANITIZER'" >&2; exit 2 ;;
+esac
+
+COV_FLAGS=()
+if [[ "$INSTRUMENT" == "1" ]]; then
+  case "$CC_CHOICE" in
+    clang)
+      # no-prune keeps the guards LLVM would otherwise drop in dominated
+      # blocks. Measured on fixtures/coverage_ladder.c it roughly doubles the
+      # guard count (5 -> 10 at -O1) and restores a monotonic coverage
+      # gradient, which is what the feedback engine ranks inputs by.
+      if [[ "$CMPLOG" == "1" ]]; then
+        COV_FLAGS=(-fsanitize-coverage=trace-pc-guard,trace-cmp,no-prune)
+      else
+        COV_FLAGS=(-fsanitize-coverage=trace-pc-guard,no-prune)
+      fi
+      ;;
+    gcc)
+      # gcc has no trace-pc-guard and no trace-cmp. trace-pc routes through
+      # the __sanitizer_cov_trace_pc fallback in the runtime, which derives
+      # edges from return addresses: coarser, and with no comparison log.
+      COV_FLAGS=(-fsanitize-coverage=trace-pc)
+      ;;
+    *) echo "aether-cc: unsupported --cc '$CC_CHOICE'" >&2; exit 2 ;;
+  esac
+fi
+
+TMPD="$(mktemp -d "${TMPDIR:-/tmp}/aether-cc.XXXXXX")"
+trap 'rm -rf "$TMPD"' EXIT
+
+OBJS=()
+i=0
+for src in "${SRCS[@]}"; do
+  obj="$TMPD/src_$i.o"; i=$((i + 1))
+  "$CC_CHOICE" -g -O1 -fno-omit-frame-pointer \
+    ${COV_FLAGS[@]+"${COV_FLAGS[@]}"} ${SAN_FLAGS[@]+"${SAN_FLAGS[@]}"} \
+    ${EXTRA[@]+"${EXTRA[@]}"} -I"$HERE" -c "$src" -o "$obj"
+  OBJS+=("$obj")
+done
+
+# The runtime itself is never instrumented: its callbacks would recurse.
+RT_OBJ=""
+if [[ "$INSTRUMENT" == "1" ]]; then
+  RT_OBJ="$TMPD/aether_rt.o"
+  "$CC_CHOICE" -g -O2 -I"$HERE" -c "$HERE/aether_rt.c" -o "$RT_OBJ"
+fi
+
+# Link without coverage flags so no sanitizer-coverage runtime is required.
+"$CC_CHOICE" -g ${SAN_FLAGS[@]+"${SAN_FLAGS[@]}"} \
+  -o "$OUT" "${OBJS[@]}" ${RT_OBJ:+"$RT_OBJ"}

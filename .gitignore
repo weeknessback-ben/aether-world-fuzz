@@ -1,0 +1,6 @@
+/target
+**/target
+.aether/
+*.profraw
+node_modules/
+integrations/claude-code/mcp-server/dist/

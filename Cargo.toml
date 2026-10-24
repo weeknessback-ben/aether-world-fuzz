@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/aether-core", "crates/aether-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.76"
+license = "Apache-2.0"
+repository = "https://github.com/weeknessback-ben/self-aware_fuzz"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+blake3 = "1"
+rand = "0.8"
+rand_chacha = "0.3"
+libc = "0.2"
+crossbeam-channel = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "unwind"
