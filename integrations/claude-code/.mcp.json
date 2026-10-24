@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "aether": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"],
+      "env": {
+        "AETHER_BINARY": "${user_config.aether_binary}",
+        "AETHER_REPO_ROOT": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

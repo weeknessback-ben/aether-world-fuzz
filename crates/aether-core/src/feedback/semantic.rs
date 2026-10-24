@@ -73,7 +73,10 @@ impl ProviderOutcome {
         Self::default()
     }
     pub fn novel(novelty: f64) -> Self {
-        ProviderOutcome { novelty: novelty.clamp(0.0, 1.0), ..Default::default() }
+        ProviderOutcome {
+            novelty: novelty.clamp(0.0, 1.0),
+            ..Default::default()
+        }
     }
 }
 
@@ -253,7 +256,10 @@ impl SemanticProvider for StateTransitionProvider {
             novelty,
             signals: vec![
                 ("new_transitions".into(), new_transitions as f64),
-                ("distinct_transitions".into(), self.seen_transitions.len() as f64),
+                (
+                    "distinct_transitions".into(),
+                    self.seen_transitions.len() as f64,
+                ),
                 ("sequence_length".into(), codes.len() as f64),
             ],
             invariant_violated: None,
@@ -298,7 +304,10 @@ pub struct InvariantProvider {
 
 impl InvariantProvider {
     pub fn new(invariants: Vec<Invariant>) -> Self {
-        InvariantProvider { invariants, violated: HashSet::new() }
+        InvariantProvider {
+            invariants,
+            violated: HashSet::new(),
+        }
     }
 }
 
@@ -392,7 +401,10 @@ mod tests {
     }
 
     fn observe(p: &mut dyn SemanticProvider, o: &ExecOutcome) -> ProviderOutcome {
-        p.observe(&Observation { input: b"", outcome: o })
+        p.observe(&Observation {
+            input: b"",
+            outcome: o,
+        })
     }
 
     #[test]
@@ -412,7 +424,10 @@ mod tests {
     #[test]
     fn exit_class_works_with_no_instrumentation() {
         let p = ExitClassProvider::default();
-        assert!(p.availability().is_available(), "must be the black-box fallback");
+        assert!(
+            p.availability().is_available(),
+            "must be the black-box fallback"
+        );
     }
 
     #[test]
@@ -453,13 +468,19 @@ mod tests {
 
     #[test]
     fn state_provider_is_bounded() {
-        let mut p = StateTransitionProvider::default();
-        p.max_tracked = 4;
+        let mut p = StateTransitionProvider {
+            max_tracked: 4,
+            ..Default::default()
+        };
         for i in 100..200u32 {
             let s = format!("{i} x\n{} y\n", i + 1);
             observe(&mut p, &outcome(ExitClass::Ok, Some(0), s.as_bytes()));
         }
-        assert!(p.seen_transitions.len() <= 8, "got {}", p.seen_transitions.len());
+        assert!(
+            p.seen_transitions.len() <= 8,
+            "got {}",
+            p.seen_transitions.len()
+        );
     }
 
     #[test]
@@ -477,16 +498,24 @@ mod tests {
         // The point of invariants: a target that answers wrongly but exits 0.
         let mut p = InvariantProvider::new(vec![Invariant {
             name: "no-internal-error".into(),
-            rule: InvariantRule::StdoutMustNotContain { needle: "INTERNAL".into() },
+            rule: InvariantRule::StdoutMustNotContain {
+                needle: "INTERNAL".into(),
+            },
         }]);
-        let r = observe(&mut p, &outcome(ExitClass::Ok, Some(0), b"result: INTERNAL ERROR"));
+        let r = observe(
+            &mut p,
+            &outcome(ExitClass::Ok, Some(0), b"result: INTERNAL ERROR"),
+        );
         assert_eq!(r.invariant_violated.as_deref(), Some("no-internal-error"));
         assert_eq!(r.novelty, 1.0);
 
         // Repeat of the same violation is not new progress.
         let again = observe(&mut p, &outcome(ExitClass::Ok, Some(0), b"INTERNAL again"));
         assert_eq!(again.novelty, 0.0);
-        assert!(again.invariant_violated.is_some(), "still a violation, just not novel");
+        assert!(
+            again.invariant_violated.is_some(),
+            "still a violation, just not novel"
+        );
 
         // Clean output: no violation.
         let ok = observe(&mut p, &outcome(ExitClass::Ok, Some(0), b"fine"));
@@ -497,7 +526,9 @@ mod tests {
     fn must_contain_on_success_only_applies_to_success() {
         let mut p = InvariantProvider::new(vec![Invariant {
             name: "ok-marker".into(),
-            rule: InvariantRule::StdoutMustContainOnSuccess { needle: "OK".into() },
+            rule: InvariantRule::StdoutMustContainOnSuccess {
+                needle: "OK".into(),
+            },
         }]);
         // Successful but missing the marker: a violation.
         assert!(observe(&mut p, &outcome(ExitClass::Ok, Some(0), b"hmm"))
@@ -506,11 +537,15 @@ mod tests {
         // Failed exit, marker absent: not a violation of this rule.
         let mut p2 = InvariantProvider::new(vec![Invariant {
             name: "ok-marker".into(),
-            rule: InvariantRule::StdoutMustContainOnSuccess { needle: "OK".into() },
+            rule: InvariantRule::StdoutMustContainOnSuccess {
+                needle: "OK".into(),
+            },
         }]);
-        assert!(observe(&mut p2, &outcome(ExitClass::NonZeroExit, Some(1), b"hmm"))
-            .invariant_violated
-            .is_none());
+        assert!(
+            observe(&mut p2, &outcome(ExitClass::NonZeroExit, Some(1), b"hmm"))
+                .invariant_violated
+                .is_none()
+        );
     }
 
     #[test]
@@ -519,12 +554,16 @@ mod tests {
             name: "no-77".into(),
             rule: InvariantRule::ExitCodeForbidden { code: 77 },
         }]);
-        assert!(observe(&mut p, &outcome(ExitClass::NonZeroExit, Some(77), b""))
-            .invariant_violated
-            .is_some());
-        assert!(observe(&mut p, &outcome(ExitClass::NonZeroExit, Some(1), b""))
-            .invariant_violated
-            .is_none());
+        assert!(
+            observe(&mut p, &outcome(ExitClass::NonZeroExit, Some(77), b""))
+                .invariant_violated
+                .is_some()
+        );
+        assert!(
+            observe(&mut p, &outcome(ExitClass::NonZeroExit, Some(1), b""))
+                .invariant_violated
+                .is_none()
+        );
     }
 
     #[test]

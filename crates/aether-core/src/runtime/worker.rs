@@ -121,7 +121,11 @@ impl LocalTransport {
     pub fn submit(&self, strategy_arm: usize, budget: u32) -> u64 {
         let id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
         let mut q = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        q.push_back(Task { id, strategy_arm, budget });
+        q.push_back(Task {
+            id,
+            strategy_arm,
+            budget,
+        });
         id
     }
 
@@ -135,7 +139,10 @@ impl LocalTransport {
     }
 
     pub fn registered(&self) -> Vec<WorkerDescriptor> {
-        self.workers.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.workers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -186,7 +193,9 @@ impl Backpressure {
     pub fn new(workers: u32) -> Self {
         // Two tasks in flight per worker: enough that a worker never idles
         // waiting for the controller, small enough that cancellation is prompt.
-        Backpressure { max_queue_depth: (workers as usize * 2).max(2) }
+        Backpressure {
+            max_queue_depth: (workers as usize * 2).max(2),
+        }
     }
 
     pub fn should_submit(&self, queue_depth: usize) -> bool {
@@ -300,8 +309,13 @@ mod tests {
         let first = t.lease(0).unwrap().unwrap();
         let second = t.lease(1).unwrap().unwrap();
         assert_ne!(first.id, second.id, "a task was leased twice");
-        assert_eq!([first.id, second.id].iter().copied().collect::<std::collections::BTreeSet<_>>(),
-                   [a, b].iter().copied().collect());
+        assert_eq!(
+            [first.id, second.id]
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            [a, b].iter().copied().collect()
+        );
         assert!(t.lease(0).unwrap().is_none(), "queue should be drained");
     }
 
@@ -320,7 +334,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(t.take_results().len(), 1);
-        assert!(t.take_results().is_empty(), "results must not be delivered twice");
+        assert!(
+            t.take_results().is_empty(),
+            "results must not be delivered twice"
+        );
     }
 
     #[test]
@@ -366,7 +383,10 @@ mod tests {
     #[test]
     fn task_priority_accounts_for_cost_uncertainty_and_redundancy() {
         let base = task_priority(10.0, 10.0, 0.0, 0.0);
-        assert!(task_priority(10.0, 1.0, 0.0, 0.0) > base, "cheaper work should rank higher");
+        assert!(
+            task_priority(10.0, 1.0, 0.0, 0.0) > base,
+            "cheaper work should rank higher"
+        );
         assert!(
             task_priority(10.0, 10.0, 1.0, 0.0) > base,
             "an unexplored option should get a bonus"
@@ -375,7 +395,10 @@ mod tests {
             task_priority(10.0, 10.0, 0.0, 1.0) < base,
             "duplicated work should rank lower"
         );
-        assert!(task_priority(10.0, 0.0, 0.0, 0.0).is_finite(), "zero cost must not divide by zero");
+        assert!(
+            task_priority(10.0, 0.0, 0.0, 0.0).is_finite(),
+            "zero cost must not divide by zero"
+        );
     }
 
     #[test]
@@ -404,6 +427,9 @@ mod tests {
         let (available, reason) = distributed_available();
         assert!(!available);
         assert!(reason.contains("not implemented"), "{reason}");
-        assert!(reason.contains("LocalTransport"), "should name what does exist: {reason}");
+        assert!(
+            reason.contains("LocalTransport"),
+            "should name what does exist: {reason}"
+        );
     }
 }

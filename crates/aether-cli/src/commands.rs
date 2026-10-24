@@ -14,7 +14,7 @@ use aether_core::exec::native::{NativeExecutor, TargetSpec};
 use aether_core::exec::Executor;
 use aether_core::ids::CampaignId;
 use aether_core::query;
-use aether_core::runtime::{Campaign, Cancel, CampaignStatus};
+use aether_core::runtime::{Campaign, CampaignStatus, Cancel};
 use aether_core::scope::ScopePolicy;
 
 use crate::{EXIT_FINDINGS, EXIT_OK};
@@ -33,7 +33,10 @@ impl Ctx {
 
     fn emit(&self, value: serde_json::Value) {
         if self.json {
-            println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value).unwrap_or_default()
+            );
         }
     }
 }
@@ -46,7 +49,9 @@ pub fn doctor(ctx: &Ctx) -> Result<u8> {
     let adapters = adapters::detect_all();
     let limits = aether_core::exec::limits::ProcessLimits::from_config(512).probe();
     let (distributed, distributed_reason) = aether_core::runtime::worker::distributed_available();
-    let cores = std::thread::available_parallelism().map(|v| v.get()).unwrap_or(0);
+    let cores = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(0);
 
     // A compiler able to emit the instrumentation is the one hard requirement.
     let usable = adapters.iter().any(|a| a.available && a.verified);
@@ -95,20 +100,42 @@ pub fn doctor(ctx: &Ctx) -> Result<u8> {
     }
     println!();
     println!("Resource limits this host enforces:");
-    println!("  memory (RLIMIT_AS):  {}", yes_no(limits.memory_limit_enforced));
-    println!("  core dumps disabled: {}", yes_no(limits.core_dumps_disabled));
-    println!("  file size limited:   {}", yes_no(limits.file_size_limited));
-    println!("  process count:       {}", yes_no(limits.process_count_limited));
+    println!(
+        "  memory (RLIMIT_AS):  {}",
+        yes_no(limits.memory_limit_enforced)
+    );
+    println!(
+        "  core dumps disabled: {}",
+        yes_no(limits.core_dumps_disabled)
+    );
+    println!(
+        "  file size limited:   {}",
+        yes_no(limits.file_size_limited)
+    );
+    println!(
+        "  process count:       {}",
+        yes_no(limits.process_count_limited)
+    );
     for u in &limits.unenforced {
         println!("  not enforced: {u}");
     }
     println!();
-    println!("Distributed execution: {}", if distributed { "available" } else { "unavailable" });
+    println!(
+        "Distributed execution: {}",
+        if distributed {
+            "available"
+        } else {
+            "unavailable"
+        }
+    );
     if !distributed {
         println!("  {distributed_reason}");
     }
     println!();
-    println!("Strategies: {}", aether_core::strategy::ALL_STRATEGY_IDS.join(", "));
+    println!(
+        "Strategies: {}",
+        aether_core::strategy::ALL_STRATEGY_IDS.join(", ")
+    );
     println!("Profiles:   {}", config::PROFILE_NAMES.join(", "));
     println!();
     if usable {
@@ -120,7 +147,11 @@ pub fn doctor(ctx: &Ctx) -> Result<u8> {
 }
 
 fn yes_no(b: bool) -> &'static str {
-    if b { "yes" } else { "no" }
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +230,13 @@ pub fn target_inspect(
     let _ = std::fs::remove_dir_all(&scratch);
 
     // Only recommend strategies whose requirements this target actually meets.
-    let mut recommended = vec!["havoc", "random-mutation", "boundary", "splice", "dictionary"];
+    let mut recommended = vec![
+        "havoc",
+        "random-mutation",
+        "boundary",
+        "splice",
+        "dictionary",
+    ];
     if caps.comparison_log && saw_cmp > 0 {
         recommended.insert(0, "cmplog-guided");
     }
@@ -234,7 +271,10 @@ pub fn target_inspect(
     );
     println!("  Fork server:  {}", yes_no(caps.fork_server));
     println!("  Edge coverage: {}", yes_no(caps.edge_coverage));
-    println!("  Comparison log: {} ({saw_cmp} comparisons seen)", yes_no(caps.comparison_log));
+    println!(
+        "  Comparison log: {} ({saw_cmp} comparisons seen)",
+        yes_no(caps.comparison_log)
+    );
     if !instrumented {
         println!(
             "\n  This target reports no instrumentation. Rebuild it with \
@@ -248,7 +288,10 @@ pub fn target_inspect(
             "    {:>4} bytes -> {:<16} edges={:<6} comparisons={}",
             c["input_bytes"],
             c["class"].as_str().unwrap_or("?"),
-            c["edges"].as_u64().map(|v| v.to_string()).unwrap_or_else(|| "n/a".into()),
+            c["edges"]
+                .as_u64()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "n/a".into()),
             c["comparisons"]
         );
     }
@@ -348,11 +391,14 @@ pub fn campaign_run(
         );
         println!(
             "  findings: {} reproducible, {} intermittent, {} unconfirmed",
-            report.findings.reproducible,
-            report.findings.intermittent,
-            report.findings.unconfirmed
+            report.findings.reproducible, report.findings.intermittent, report.findings.unconfirmed
         );
-        for f in report.findings.items.iter().filter(|f| f.status.is_confirmed()) {
+        for f in report
+            .findings
+            .items
+            .iter()
+            .filter(|f| f.status.is_confirmed())
+        {
             println!("    {}", f.summary());
         }
         for p in &written {
@@ -361,19 +407,21 @@ pub fn campaign_run(
     }
 
     // A non-zero exit on findings lets CI fail a build without parsing output.
-    Ok(if fail_on_findings && report.findings.confirmed_count() > 0 {
-        EXIT_FINDINGS
-    } else {
-        EXIT_OK
-    })
+    Ok(
+        if fail_on_findings && report.findings.confirmed_count() > 0 {
+            EXIT_FINDINGS
+        } else {
+            EXIT_OK
+        },
+    )
 }
 
 pub fn campaign_status(ctx: &Ctx, dir: &Path, campaign_id: Option<&str>) -> Result<u8> {
     let store = query::open_store(dir)?;
     let id = query::resolve_campaign(&store, campaign_id)?;
     let path = Campaign::status_file(dir, &id);
-    let body = std::fs::read_to_string(&path)
-        .map_err(|_| Error::not_found("campaign status", &id))?;
+    let body =
+        std::fs::read_to_string(&path).map_err(|_| Error::not_found("campaign status", &id))?;
     let status: CampaignStatus = serde_json::from_str(&body)?;
 
     if ctx.json {
@@ -382,7 +430,10 @@ pub fn campaign_status(ctx: &Ctx, dir: &Path, campaign_id: Option<&str>) -> Resu
     }
     println!("Campaign {} ({})", status.campaign_id, status.state);
     println!("  target:     {}", status.target_name);
-    println!("  elapsed:    {}", aether_core::time::format_duration_ms(status.elapsed_ms));
+    println!(
+        "  elapsed:    {}",
+        aether_core::time::format_duration_ms(status.elapsed_ms)
+    );
     println!("  workers:    {}", status.workers);
     println!(
         "  executions: {} ({:.0}/s)",
@@ -458,8 +509,8 @@ pub fn campaign_list(ctx: &Ctx, dir: &Path, limit: usize) -> Result<u8> {
         return Ok(EXIT_OK);
     }
     println!(
-        "{:<24} {:<16} {:<12} {:>10} {:>8}  {}",
-        "CAMPAIGN", "TARGET", "STATUS", "EXECS", "EDGES", "CREATED"
+        "{:<24} {:<16} {:<12} {:>10} {:>8}  CREATED",
+        "CAMPAIGN", "TARGET", "STATUS", "EXECS", "EDGES"
     );
     for r in &rows {
         println!(
@@ -509,14 +560,20 @@ pub fn corpus_stats(ctx: &Ctx, dir: &Path, campaign_id: Option<&str>) -> Result<
     println!("  distinct behaviours: {}", stats.distinct_behaviors);
     println!("  mean score:         {:.3}", stats.mean_score);
     println!("  input bytes:        {}", stats.total_input_bytes);
-    println!("  stored objects:     {} ({} bytes)", stats.store_objects, stats.store_bytes);
+    println!(
+        "  stored objects:     {} ({} bytes)",
+        stats.store_objects, stats.store_bytes
+    );
     println!(
         "  finding evidence:   {} (never evicted by retention)",
         stats.finding_inputs
     );
     if !top.is_empty() {
         println!("\n  Highest ranked:");
-        println!("    {:<22} {:>6} {:>8} {:>10}  {}", "INPUT", "BYTES", "EDGES", "SCORE", "STRATEGY");
+        println!(
+            "    {:<22} {:>6} {:>8} {:>10}  STRATEGY",
+            "INPUT", "BYTES", "EDGES", "SCORE"
+        );
         for r in &top {
             println!(
                 "    {:<22} {:>6} {:>8} {:>10.3}  {}",
@@ -572,7 +629,10 @@ pub fn findings_list(
         );
         return Ok(EXIT_OK);
     }
-    println!("{:<24} {:<14} {:<10} {:<22} {}", "FINDING", "STATUS", "REPRO", "FAULT", "CLASS");
+    println!(
+        "{:<24} {:<14} {:<10} {:<22} CLASS",
+        "FINDING", "STATUS", "REPRO", "FAULT"
+    );
     for r in &rows {
         println!(
             "{:<24} {:<14} {:<10} {:<22} {}",
@@ -606,8 +666,10 @@ pub fn findings_show(ctx: &Ctx, dir: &Path, finding_id: &str) -> Result<u8> {
     }
     println!("  reproduced: {}/{}", f.repro_successes, f.repro_attempts);
     if let Some(argv) = evidence.get("reproduce_argv").and_then(|v| v.as_array()) {
-        let cmd: Vec<String> =
-            argv.iter().map(|a| a.as_str().unwrap_or("").to_string()).collect();
+        let cmd: Vec<String> = argv
+            .iter()
+            .map(|a| a.as_str().unwrap_or("").to_string())
+            .collect();
         println!("  reproduce: {}", cmd.join(" "));
         println!(
             "    input delivered on {}",
@@ -761,14 +823,22 @@ pub fn findings_minimize(
         return Ok(EXIT_OK);
     }
     println!("Minimised {finding_id}");
-    println!("  {} -> {} bytes ({:.0}% smaller)",
-        outcome.original_len, outcome.input.len(), outcome.reduction_ratio() * 100.0);
+    println!(
+        "  {} -> {} bytes ({:.0}% smaller)",
+        outcome.original_len,
+        outcome.input.len(),
+        outcome.reduction_ratio() * 100.0
+    );
     println!("  executions used: {}", outcome.execs_used);
     println!("  stopped because: {:?}", outcome.stop);
     println!(
         "  re-validated: {}{}",
         yes_no(validated),
-        if validated { "" } else { "  <- the result could not be confirmed" }
+        if validated {
+            ""
+        } else {
+            "  <- the result could not be confirmed"
+        }
     );
     println!("  written to: {}", out_path.display());
     Ok(EXIT_OK)
@@ -879,12 +949,7 @@ pub fn benchmark_run(
 // init
 // ---------------------------------------------------------------------------
 
-pub fn init(
-    ctx: &Ctx,
-    profile: &str,
-    binary: Option<&Path>,
-    output: Option<&Path>,
-) -> Result<u8> {
+pub fn init(ctx: &Ctx, profile: &str, binary: Option<&Path>, output: Option<&Path>) -> Result<u8> {
     let bin = binary
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "./build/target".to_string());
@@ -1001,4 +1066,3 @@ fn truncate(s: &str, n: usize) -> String {
     }
     s.chars().take(n.saturating_sub(1)).collect::<String>() + "…"
 }
-

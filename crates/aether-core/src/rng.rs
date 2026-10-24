@@ -16,7 +16,9 @@ pub struct Rng {
 
 impl Rng {
     pub fn from_seed(seed: u64) -> Self {
-        Rng { inner: ChaCha8Rng::seed_from_u64(seed) }
+        Rng {
+            inner: ChaCha8Rng::seed_from_u64(seed),
+        }
     }
 
     /// Derive an independent stream for a sub-component. Deterministic in
@@ -30,7 +32,9 @@ impl Rng {
         let d = h.finalize();
         let mut s = [0u8; 8];
         s.copy_from_slice(&d.as_bytes()[..8]);
-        Rng { inner: ChaCha8Rng::seed_from_u64(u64::from_le_bytes(s)) }
+        Rng {
+            inner: ChaCha8Rng::seed_from_u64(u64::from_le_bytes(s)),
+        }
     }
 
     pub fn next_u64(&mut self) -> u64 {
@@ -40,12 +44,20 @@ impl Rng {
     /// Uniform in `0..n`. Returns 0 when `n == 0` so callers can skip a bounds
     /// check on an empty collection.
     pub fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { (self.next_u64() % n as u64) as usize }
+        if n == 0 {
+            0
+        } else {
+            (self.next_u64() % n as u64) as usize
+        }
     }
 
     /// Inclusive range.
     pub fn between(&mut self, lo: usize, hi: usize) -> usize {
-        if hi <= lo { lo } else { lo + self.below(hi - lo + 1) }
+        if hi <= lo {
+            lo
+        } else {
+            lo + self.below(hi - lo + 1)
+        }
     }
 
     pub fn byte(&mut self) -> u8 {
@@ -98,7 +110,11 @@ impl Rng {
         let b = b.max(1e-6);
         let x = self.gamma(a);
         let y = self.gamma(b);
-        if x + y <= 0.0 { 0.5 } else { x / (x + y) }
+        if x + y <= 0.0 {
+            0.5
+        } else {
+            x / (x + y)
+        }
     }
 
     /// Pick an index with probability proportional to its weight. Returns
@@ -135,8 +151,14 @@ mod tests {
 
     #[test]
     fn same_seed_replays_identically() {
-        let a: Vec<u64> = { let mut r = Rng::from_seed(42); (0..64).map(|_| r.next_u64()).collect() };
-        let b: Vec<u64> = { let mut r = Rng::from_seed(42); (0..64).map(|_| r.next_u64()).collect() };
+        let a: Vec<u64> = {
+            let mut r = Rng::from_seed(42);
+            (0..64).map(|_| r.next_u64()).collect()
+        };
+        let b: Vec<u64> = {
+            let mut r = Rng::from_seed(42);
+            (0..64).map(|_| r.next_u64()).collect()
+        };
         assert_eq!(a, b);
     }
 
@@ -149,9 +171,18 @@ mod tests {
 
     #[test]
     fn derived_streams_are_independent_and_stable() {
-        let a1: Vec<u64> = { let mut r = Rng::derive(7, "worker", 0); (0..8).map(|_| r.next_u64()).collect() };
-        let a2: Vec<u64> = { let mut r = Rng::derive(7, "worker", 0); (0..8).map(|_| r.next_u64()).collect() };
-        let b: Vec<u64> = { let mut r = Rng::derive(7, "worker", 1); (0..8).map(|_| r.next_u64()).collect() };
+        let a1: Vec<u64> = {
+            let mut r = Rng::derive(7, "worker", 0);
+            (0..8).map(|_| r.next_u64()).collect()
+        };
+        let a2: Vec<u64> = {
+            let mut r = Rng::derive(7, "worker", 0);
+            (0..8).map(|_| r.next_u64()).collect()
+        };
+        let b: Vec<u64> = {
+            let mut r = Rng::derive(7, "worker", 1);
+            (0..8).map(|_| r.next_u64()).collect()
+        };
         assert_eq!(a1, a2, "derived stream must be reproducible");
         assert_ne!(a1, b, "different worker indices must not share a stream");
     }

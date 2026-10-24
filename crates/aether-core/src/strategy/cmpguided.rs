@@ -104,9 +104,11 @@ impl Strategy for CmpGuided {
                 continue;
             }
             self.store.observe(&base.cmp_entries);
-            let subs =
-                self.store
-                    .substitutions_for(&base.bytes, &base.cmp_entries, self.max_subs_per_base);
+            let subs = self.store.substitutions_for(
+                &base.bytes,
+                &base.cmp_entries,
+                self.max_subs_per_base,
+            );
             for sub in subs {
                 if out.len() >= budget as usize {
                     break;
@@ -149,7 +151,10 @@ impl Strategy for CmpGuided {
                     break;
                 }
                 let at = rng.below(buf.len() - bytes.len() + 1);
-                let sub = Substitution { offset: at, bytes: bytes.clone() };
+                let sub = Substitution {
+                    offset: at,
+                    bytes: bytes.clone(),
+                };
                 match Self::apply_substitution(&buf, &sub, self.max_len) {
                     Some(b) => out.push(Candidate::from_base(b, base, "place-constant")),
                     // The write would be a no-op on this base; try another
@@ -176,7 +181,11 @@ impl Strategy for CmpGuided {
                 if buf.is_empty() || buf == base.bytes {
                     continue;
                 }
-                out.push(Candidate::from_base(buf, base, "bootstrap-reach-comparison"));
+                out.push(Candidate::from_base(
+                    buf,
+                    base,
+                    "bootstrap-reach-comparison",
+                ));
             }
         }
 
@@ -210,11 +219,21 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn base_with(bytes: &[u8], entries: Vec<CmpEntry>) -> Base {
-        Base { id: InputId::new(), bytes: bytes.to_vec(), cmp_entries: entries }
+        Base {
+            id: InputId::new(),
+            bytes: bytes.to_vec(),
+            cmp_entries: entries,
+        }
     }
 
     fn entry(v0: u64, v1: u64, width: u8) -> CmpEntry {
-        CmpEntry { v0, v1, pc_hash: 7, width, is_const: true }
+        CmpEntry {
+            v0,
+            v1,
+            pc_hash: 7,
+            width,
+            is_const: true,
+        }
     }
 
     fn strategy() -> CmpGuided {
@@ -239,7 +258,9 @@ mod tests {
         let cands = s.propose(8, &[b], &mut rng);
 
         assert!(
-            cands.iter().any(|c| c.bytes.starts_with(&[0xEF, 0xBE, 0xAD, 0xDE])),
+            cands
+                .iter()
+                .any(|c| c.bytes.starts_with(&[0xEF, 0xBE, 0xAD, 0xDE])),
             "no candidate placed the little-endian constant at offset 0: {:?}",
             cands.iter().map(|c| hex(&c.bytes)).collect::<Vec<_>>()
         );
@@ -266,7 +287,8 @@ mod tests {
         let b2 = base_with(&after1.bytes, vec![entry(0x0203, 0x4141, 2)]);
         let c2 = s.propose(8, &[b2], &mut rng);
         assert!(
-            c2.iter().any(|c| c.bytes.len() >= 6 && c.bytes[4..6] == [0x03, 0x02]),
+            c2.iter()
+                .any(|c| c.bytes.len() >= 6 && c.bytes[4..6] == [0x03, 0x02]),
             "stage 2 did not place the version constant: {:?}",
             c2.iter().map(|c| hex(&c.bytes)).collect::<Vec<_>>()
         );
@@ -295,9 +317,15 @@ mod tests {
         let b = base_with(b"\0", Vec::new());
         let cands = s.propose(16, &[b], &mut rng);
 
-        assert!(!cands.is_empty(), "strategy starved itself with no comparison data");
+        assert!(
+            !cands.is_empty(),
+            "strategy starved itself with no comparison data"
+        );
         assert!(cands.iter().all(|c| c.note == "bootstrap-reach-comparison"));
-        assert!(cands.iter().all(|c| c.bytes.len() > 1), "bootstrap must grow the seed");
+        assert!(
+            cands.iter().all(|c| c.bytes.len() > 1),
+            "bootstrap must grow the seed"
+        );
         assert!(
             cands.iter().any(|c| c.bytes.len() >= 8),
             "bootstrap should grow the input past a minimum-length check"
@@ -331,7 +359,10 @@ mod tests {
         let b = base_with(b"\0", vec![entry(8, 0, 8)]);
         let cands = s.propose(16, &[b], &mut rng);
 
-        assert!(!cands.is_empty(), "strategy stalled on a base too short for the constant");
+        assert!(
+            !cands.is_empty(),
+            "strategy stalled on a base too short for the constant"
+        );
         assert!(
             cands.iter().any(|c| c.bytes.len() >= 8),
             "should have grown the base to fit an eight-byte constant: {:?}",
@@ -357,10 +388,15 @@ mod tests {
         s.store.observe(&[entry(0xCAFE_BABE, 0x1111_1111, 4)]);
         let b = base_with(b"zzzzzzzzzzzz", Vec::new());
         let cands = s.propose(8, &[b], &mut rng);
-        assert!(!cands.is_empty(), "should fall back to placing the constant");
+        assert!(
+            !cands.is_empty(),
+            "should fall back to placing the constant"
+        );
         assert!(cands.iter().all(|c| c.note == "place-constant"));
         assert!(
-            cands.iter().any(|c| c.bytes.windows(4).any(|w| w == [0xBE, 0xBA, 0xFE, 0xCA])),
+            cands
+                .iter()
+                .any(|c| c.bytes.windows(4).any(|w| w == [0xBE, 0xBA, 0xFE, 0xCA])),
             "fallback never wrote the constant"
         );
     }
@@ -374,8 +410,9 @@ mod tests {
         let mut s = CmpGuided::default();
         s.initialize(&c).unwrap();
 
-        let entries: Vec<CmpEntry> =
-            (0..200).map(|i| entry(0x1000 + i, 0x4141_4141, 4)).collect();
+        let entries: Vec<CmpEntry> = (0..200)
+            .map(|i| entry(0x1000 + i, 0x4141_4141, 4))
+            .collect();
         let b = base_with(b"AAAAAAAA", entries);
         let mut rng = Rng::from_seed(6);
         let cands = s.propose(5, &[b], &mut rng);
@@ -390,8 +427,11 @@ mod tests {
         let mut s = strategy();
         let mut rng = Rng::from_seed(7);
         // Constant already equals what is in the input.
-        let b = base_with(&[0xEF, 0xBE, 0xAD, 0xDE], vec![entry(0xDEAD_BEEF, 0xDEAD_BEEF, 4)]);
-        for c in s.propose(8, &[b.clone()], &mut rng) {
+        let b = base_with(
+            &[0xEF, 0xBE, 0xAD, 0xDE],
+            vec![entry(0xDEAD_BEEF, 0xDEAD_BEEF, 4)],
+        );
+        for c in s.propose(8, std::slice::from_ref(&b), &mut rng) {
             assert_ne!(c.bytes, b.bytes, "proposed an identical input");
         }
     }

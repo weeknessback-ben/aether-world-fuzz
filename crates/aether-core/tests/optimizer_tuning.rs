@@ -49,20 +49,29 @@ fn instance(family: Family, n: usize, select: usize, seed: u64) -> Problem {
                 }
                 Family::Overlapping => {
                     // All drawn from a small universe, so entries collide.
-                    (0..rng.between(15, 45)).map(|_| rng.below(90) as u32).collect()
+                    (0..rng.between(15, 45))
+                        .map(|_| rng.below(90) as u32)
+                        .collect()
                 }
                 Family::Skewed => {
                     if i % 10 == 0 {
-                        (0..rng.between(60, 120)).map(|_| rng.below(400) as u32).collect()
+                        (0..rng.between(60, 120))
+                            .map(|_| rng.below(400) as u32)
+                            .collect()
                     } else {
-                        (0..rng.between(3, 12)).map(|_| rng.below(400) as u32).collect()
+                        (0..rng.between(3, 12))
+                            .map(|_| rng.below(400) as u32)
+                            .collect()
                     }
                 }
             };
             let mut edges = edges;
             edges.sort_unstable();
             edges.dedup();
-            CorpusItem { edges, cost_micros: rng.between(100, 4000) as u64 }
+            CorpusItem {
+                edges,
+                cost_micros: rng.between(100, 4000) as u64,
+            }
         })
         .collect();
     Problem::CorpusSubset { items, select }
@@ -85,14 +94,22 @@ where
 
             let mut baseline = Greedy;
             let mut brng = Rng::derive(seed, "greedy", 0);
-            let base =
-                baseline.solve(&prepared, &p, SolveBudget::from_millis(budget_ms), &mut brng);
+            let base = baseline.solve(
+                &prepared,
+                &p,
+                SolveBudget::from_millis(budget_ms),
+                &mut brng,
+            );
 
             let mut s = make();
             let mut rng = Rng::derive(seed, s.name(), 0);
             let got = s.solve(&prepared, &p, SolveBudget::from_millis(budget_ms), &mut rng);
 
-            assert!(got.feasible, "{} produced an infeasible solution", got.solver);
+            assert!(
+                got.feasible,
+                "{} produced an infeasible solution",
+                got.solver
+            );
             if base.true_objective > 0.0 {
                 ratios.push(got.true_objective / base.true_objective);
             }
@@ -219,14 +236,24 @@ fn experiment_f_classical_versus_quantum_inspired() {
             "simulated-quantum-annealing",
         ] {
             let make: Box<dyn Fn() -> Box<dyn Solver>> = match name {
-                "simulated-annealing" => {
-                    Box::new(|| Box::new(SimulatedAnnealing { sweeps: 100_000, restarts: 64, ..Default::default() }))
-                }
-                "quantum-inspired-evolutionary" => {
-                    Box::new(|| Box::new(Qiea { generations: 100_000, ..Default::default() }))
-                }
+                "simulated-annealing" => Box::new(|| {
+                    Box::new(SimulatedAnnealing {
+                        sweeps: 100_000,
+                        restarts: 64,
+                        ..Default::default()
+                    })
+                }),
+                "quantum-inspired-evolutionary" => Box::new(|| {
+                    Box::new(Qiea {
+                        generations: 100_000,
+                        ..Default::default()
+                    })
+                }),
                 _ => Box::new(|| {
-                    Box::new(SimulatedQuantumAnnealing { sweeps: 100_000, ..Default::default() })
+                    Box::new(SimulatedQuantumAnnealing {
+                        sweeps: 100_000,
+                        ..Default::default()
+                    })
                 }),
             };
 
@@ -240,7 +267,12 @@ fn experiment_f_classical_versus_quantum_inspired() {
 
                     let mut g = Greedy;
                     let mut grng = Rng::derive(seed, "greedy", 0);
-                    let base = g.solve(&prepared, &p, SolveBudget::from_millis(budget_ms), &mut grng);
+                    let base = g.solve(
+                        &prepared,
+                        &p,
+                        SolveBudget::from_millis(budget_ms),
+                        &mut grng,
+                    );
 
                     let mut s = make();
                     let mut rng = Rng::derive(seed, s.name(), 0);

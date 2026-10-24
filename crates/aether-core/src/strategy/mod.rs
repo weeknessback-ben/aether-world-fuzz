@@ -51,11 +51,19 @@ pub struct Candidate {
 
 impl Candidate {
     pub fn new(bytes: Vec<u8>) -> Self {
-        Candidate { bytes, parent: None, note: String::new() }
+        Candidate {
+            bytes,
+            parent: None,
+            note: String::new(),
+        }
     }
 
     pub fn from_base(bytes: Vec<u8>, base: &Base, note: impl Into<String>) -> Self {
-        Candidate { bytes, parent: Some(base.id.clone()), note: note.into() }
+        Candidate {
+            bytes,
+            parent: Some(base.id.clone()),
+            note: note.into(),
+        }
     }
 }
 
@@ -107,7 +115,10 @@ impl StrategyContext<'_> {
     }
 
     pub fn param_f64(&self, key: &str, default: f64) -> f64 {
-        self.params.get(key).and_then(|v| v.as_float()).unwrap_or(default)
+        self.params
+            .get(key)
+            .and_then(|v| v.as_float())
+            .unwrap_or(default)
     }
 }
 
@@ -178,16 +189,16 @@ pub fn build(id: &str) -> Result<Box<dyn Strategy>> {
     })
 }
 
+/// The usable strategies, plus `(id, reason)` for each one left out.
+pub type BuiltStrategies = (Vec<Box<dyn Strategy>>, Vec<(String, String)>);
+
 /// Build the requested strategies, dropping any whose requirements this target
 /// cannot meet.
 ///
 /// Returns the usable strategies plus a list of `(id, reason)` for those left
 /// out, so a campaign can report which strategies were unavailable rather than
 /// silently running a smaller set than asked for.
-pub fn build_all(
-    requested: &[String],
-    ctx: &StrategyContext<'_>,
-) -> Result<(Vec<Box<dyn Strategy>>, Vec<(String, String)>)> {
+pub fn build_all(requested: &[String], ctx: &StrategyContext<'_>) -> Result<BuiltStrategies> {
     let ids: Vec<String> = if requested.is_empty() {
         ALL_STRATEGY_IDS.iter().map(|s| s.to_string()).collect()
     } else {
@@ -202,7 +213,10 @@ pub fn build_all(
         let caps = s.capabilities();
 
         if caps.requires_coverage && !ctx.coverage_available {
-            skipped.push((id.clone(), "needs edge coverage; target is not instrumented".into()));
+            skipped.push((
+                id.clone(),
+                "needs edge coverage; target is not instrumented".into(),
+            ));
             continue;
         }
         if caps.requires_cmplog && !ctx.cmplog_available {
@@ -327,7 +341,13 @@ pub struct Havoc {
 
 impl Default for Havoc {
     fn default() -> Self {
-        Havoc { max_len: 65_536, max_stack: 5, stack_floor: 1, recent_wins: 0, recent_total: 0 }
+        Havoc {
+            max_len: 65_536,
+            max_stack: 5,
+            stack_floor: 1,
+            recent_wins: 0,
+            recent_total: 0,
+        }
     }
 }
 
@@ -373,7 +393,10 @@ impl Strategy for Havoc {
 
     fn observe(&mut self, results: &[CandidateResult]) {
         self.recent_total += results.len() as u32;
-        self.recent_wins += results.iter().filter(|r| r.feedback.is_interesting()).count() as u32;
+        self.recent_wins += results
+            .iter()
+            .filter(|r| r.feedback.is_interesting())
+            .count() as u32;
         if self.recent_total >= 256 {
             let rate = self.recent_wins as f64 / self.recent_total as f64;
             // A low hit rate means small edits are not landing; reach further.
@@ -453,7 +476,11 @@ impl Strategy for Boundary {
                 } else {
                     let room = self.max_len.saturating_sub(buf.len());
                     if room > 0 {
-                        let fill = if buf.is_empty() { 0x41 } else { buf[buf.len() - 1] };
+                        let fill = if buf.is_empty() {
+                            0x41
+                        } else {
+                            buf[buf.len() - 1]
+                        };
                         buf.extend(std::iter::repeat(fill).take(room));
                     }
                     "length-max"
@@ -575,7 +602,11 @@ pub(crate) mod testutil {
         if interesting {
             fb.novelty = 1.0;
         }
-        CandidateResult { note: note.to_string(), feedback: fb, retained: interesting }
+        CandidateResult {
+            note: note.to_string(),
+            feedback: fb,
+            retained: interesting,
+        }
     }
 }
 
@@ -620,11 +651,15 @@ mod tests {
         };
         assert!(!built.is_empty(), "byte-level strategies should still work");
         assert!(
-            skipped.iter().any(|(id, r)| id == "cmplog-guided" && r.contains("comparison log")),
+            skipped
+                .iter()
+                .any(|(id, r)| id == "cmplog-guided" && r.contains("comparison log")),
             "skipped: {skipped:?}"
         );
         assert!(
-            skipped.iter().any(|(id, r)| id == "grammar" && r.contains("grammar_file")),
+            skipped
+                .iter()
+                .any(|(id, r)| id == "grammar" && r.contains("grammar_file")),
             "skipped: {skipped:?}"
         );
         for (_, reason) in &skipped {
@@ -674,7 +709,10 @@ mod tests {
             let mut s = build(id).unwrap();
             s.initialize(&c).unwrap();
             let cands = s.propose(32, &b, &mut rng);
-            assert!(!cands.is_empty(), "{id} proposed nothing from a two-entry corpus");
+            assert!(
+                !cands.is_empty(),
+                "{id} proposed nothing from a two-entry corpus"
+            );
             for cand in &cands {
                 assert!(cand.bytes.len() <= 64, "{id} exceeded the ceiling");
                 assert!(!cand.note.is_empty(), "{id} did not label its operator");
@@ -692,7 +730,9 @@ mod tests {
         s.initialize(&c).unwrap();
         let mut rng = Rng::from_seed(3);
         assert!(s.propose(8, &bases(&[b"only one"]), &mut rng).is_empty());
-        assert!(!s.propose(8, &bases(&[b"first one", b"second one"]), &mut rng).is_empty());
+        assert!(!s
+            .propose(8, &bases(&[b"first one", b"second one"]), &mut rng)
+            .is_empty());
     }
 
     #[test]
@@ -706,7 +746,9 @@ mod tests {
         let b = bases(&[b"AAAAAAAA", b"BBBBBBBB"]);
         let cands = s.propose(64, &b, &mut rng);
         assert!(
-            cands.iter().any(|c| c.bytes.contains(&b'A') && c.bytes.contains(&b'B')),
+            cands
+                .iter()
+                .any(|c| c.bytes.contains(&b'A') && c.bytes.contains(&b'B')),
             "splice never mixed the two parents"
         );
     }
@@ -720,8 +762,7 @@ mod tests {
         h.initialize(&c).unwrap();
         let before = h.stack_floor;
         // A long run of fruitless results should make it reach further.
-        let fruitless: Vec<CandidateResult> =
-            (0..300).map(|_| result("havoc-1", false)).collect();
+        let fruitless: Vec<CandidateResult> = (0..300).map(|_| result("havoc-1", false)).collect();
         h.observe(&fruitless);
         assert!(h.stack_floor > before, "stack floor did not adapt upward");
     }
@@ -733,7 +774,11 @@ mod tests {
         let c = ctx(&dict, None, &params);
         let mut h = Havoc::default();
         h.initialize(&c).unwrap();
-        h.observe(&(0..300).map(|_| result("havoc-1", false)).collect::<Vec<_>>());
+        h.observe(
+            &(0..300)
+                .map(|_| result("havoc-1", false))
+                .collect::<Vec<_>>(),
+        );
         let state = h.export_state();
 
         let mut h2 = Havoc::default();
@@ -769,7 +814,11 @@ mod tests {
         let c = ctx(&dict, None, &params);
         let mut s = RandomMutation::default();
         s.initialize(&c).unwrap();
-        s.observe(&[result("bit-flip", true), result("bit-flip", true), result("insert", false)]);
+        s.observe(&[
+            result("bit-flip", true),
+            result("bit-flip", true),
+            result("insert", false),
+        ]);
         let state = s.export_state();
         assert_eq!(state["operator_wins"]["bit-flip"], 2);
         assert!(state["operator_wins"].get("insert").is_none());
@@ -785,7 +834,13 @@ mod tests {
         s.initialize(&c).unwrap();
         let mut rng = Rng::from_seed(5);
         let cands = s.propose(200, &bases(&[b"some base"]), &mut rng);
-        assert!(cands.iter().any(|x| x.bytes.is_empty()), "never tried an empty input");
-        assert!(cands.iter().any(|x| x.bytes.len() == 32), "never tried the maximum length");
+        assert!(
+            cands.iter().any(|x| x.bytes.is_empty()),
+            "never tried an empty input"
+        );
+        assert!(
+            cands.iter().any(|x| x.bytes.len() == 32),
+            "never tried the maximum length"
+        );
     }
 }

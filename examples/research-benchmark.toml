@@ -1,0 +1,64 @@
+# Comparing configurations.
+#
+# This profile exists to make a campaign a pure function of its seed. Two
+# things otherwise make an outcome depend on machine load, both deliberate in
+# normal use: the adaptive schedulers reward discovery per unit of *measured*
+# compute, and the corpus ranks cheaper inputs higher. Both read a wall-clock
+# duration, so under different load the same seed explores differently.
+#
+# Useful in a real campaign, fatal to a controlled experiment - so here the
+# scheduler is timing-independent and the corpus cost term is zero. The search
+# is less efficient and replays exactly, which is the right trade for a
+# comparison.
+#
+# Known limitation: even so, repeated runs agree in roughly five cases out of
+# six and otherwise differ by a single edge. See docs/BENCHMARKING.md.
+schema_version = 1
+
+[target]
+name = "crash_magic"
+kind = "executable"
+binary = "build/crash_magic"
+input_mode = "stdin"
+timeout_ms = 1000
+memory_limit_mb = 512
+instrumentation = "aether-native"
+
+[campaign]
+# A work budget rather than a time budget, so a run does the same amount of
+# work on a fast machine and a slow one.
+duration_secs = 0
+max_execs = 200000
+workers = 1
+seed = 3203334708
+
+[strategies]
+enabled = ["cmplog-guided", "havoc", "random-mutation", "boundary", "splice"]
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "cmplog", "sanitizer"]
+
+[intel]
+# Timing-independent: round-robin consults no measured duration.
+scheduler = "round-robin"
+round_budget = 64
+selection_floor = 0.0
+
+[intel.corpus_weights]
+coverage = 1.0
+novelty = 0.6
+diversity = 0.3
+mutation_productivity = 0.5
+# Zero, so corpus ranking does not read a measured duration either.
+execution_cost = 0.0
+redundancy = 0.4
+state_transitions = 0.3
+
+[reproduction]
+attempts = 5
+required_successes = 3
+minimize = true
+
+[output]
+dir = ".aether-bench"
+report_formats = ["json", "bench-json"]

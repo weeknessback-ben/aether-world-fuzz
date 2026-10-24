@@ -1,0 +1,25 @@
+{
+  "name": "aether-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server exposing the AETHER fuzzing engine to Claude Code",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "aether-mcp-server": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test dist/*.test.js",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.21.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2"
+  },
+  "engines": { "node": ">=18" }
+}

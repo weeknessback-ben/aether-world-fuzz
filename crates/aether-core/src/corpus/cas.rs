@@ -23,7 +23,9 @@ pub struct ContentStore {
 impl ContentStore {
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root).map_err(|e| Error::io(root, e))?;
-        Ok(ContentStore { root: root.to_path_buf() })
+        Ok(ContentStore {
+            root: root.to_path_buf(),
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -51,7 +53,11 @@ impl ContentStore {
         // Write to a unique temporary name, then rename. rename(2) within a
         // directory is atomic, so a reader sees either no object or a complete
         // one - never a partial write from an interrupted campaign.
-        let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), crate::ids::InputId::new()));
+        let tmp = dir.join(format!(
+            ".tmp-{}-{}",
+            std::process::id(),
+            crate::ids::InputId::new()
+        ));
         {
             let mut f = std::fs::File::create(&tmp).map_err(|e| Error::io(&tmp, e))?;
             f.write_all(bytes).map_err(|e| Error::io(&tmp, e))?;
@@ -253,7 +259,10 @@ mod tests {
         let h = cas.put(b"original").unwrap();
         let p = cas.path_for(&h).unwrap();
         std::fs::write(&p, b"tampered").unwrap();
-        assert!(!cas.verify(&h).unwrap(), "verify must notice altered content");
+        assert!(
+            !cas.verify(&h).unwrap(),
+            "verify must notice altered content"
+        );
     }
 
     #[test]

@@ -82,7 +82,12 @@ pub struct AdapterStatus {
 /// Probe every adapter. Cheap enough to call from `aether doctor` and at
 /// campaign start.
 pub fn detect_all() -> Vec<AdapterStatus> {
-    vec![detect_native(), detect_black_box(), detect_libfuzzer(), detect_aflpp()]
+    vec![
+        detect_native(),
+        detect_black_box(),
+        detect_libfuzzer(),
+        detect_aflpp(),
+    ]
 }
 
 pub fn detect(backend: Backend) -> AdapterStatus {
@@ -125,7 +130,11 @@ fn detect_native() -> AdapterStatus {
     AdapterStatus {
         backend: Backend::AetherNative,
         available: missing.is_empty(),
-        reason: if missing.is_empty() { None } else { Some(missing.join("; ")) },
+        reason: if missing.is_empty() {
+            None
+        } else {
+            Some(missing.join("; "))
+        },
         remedy: if missing.is_empty() {
             None
         } else {
@@ -204,7 +213,9 @@ fn detect_libfuzzer() -> AdapterStatus {
 
 fn detect_aflpp() -> AdapterStatus {
     let fuzz = which("afl-fuzz");
-    let cc = which("afl-clang-fast").or_else(|| which("afl-cc")).or_else(|| which("afl-gcc"));
+    let cc = which("afl-clang-fast")
+        .or_else(|| which("afl-cc"))
+        .or_else(|| which("afl-gcc"));
     let mut discovered = Vec::new();
     if let Some(p) = &fuzz {
         discovered.push(format!("afl-fuzz at {}", p.display()));
@@ -224,7 +235,11 @@ fn detect_aflpp() -> AdapterStatus {
     AdapterStatus {
         backend: Backend::AflPlusPlus,
         available: missing.is_empty(),
-        reason: if missing.is_empty() { None } else { Some(missing.join("; ")) },
+        reason: if missing.is_empty() {
+            None
+        } else {
+            Some(missing.join("; "))
+        },
         remedy: if missing.is_empty() {
             None
         } else {
@@ -303,7 +318,11 @@ pub fn declaration(backend: Backend) -> AdapterDeclaration {
                     .into(),
                 "execution duration".into(),
             ],
-            configuration: vec!["timeout_ms".into(), "memory_limit_mb".into(), "input_mode".into()],
+            configuration: vec![
+                "timeout_ms".into(),
+                "memory_limit_mb".into(),
+                "input_mode".into(),
+            ],
             outputs: vec!["ExecOutcome with bounded stdout/stderr, no coverage".into()],
             resource_limits: vec!["same rlimits as the native backend".into()],
             failure_modes: vec!["none specific to this adapter".into()],
@@ -355,7 +374,7 @@ pub fn declaration(backend: Backend) -> AdapterDeclaration {
         Backend::AflPlusPlus => AdapterDeclaration {
             backend,
             supported_target_types: vec![
-                "AFL++-instrumented executable reading stdin or a @@ path".into()
+                "AFL++-instrumented executable reading stdin or a @@ path".into(),
             ],
             input_model: "a corpus directory of files; afl-fuzz owns the inner loop".into(),
             required_instrumentation: "afl-clang-fast / afl-cc / afl-gcc".into(),
@@ -446,7 +465,10 @@ mod tests {
     fn native_backend_is_available_on_a_host_with_a_compiler() {
         let s = detect_native();
         assert!(s.available, "expected a C compiler: {:?}", s.reason);
-        assert!(s.verified, "the native backend is the one that is actually exercised");
+        assert!(
+            s.verified,
+            "the native backend is the one that is actually exercised"
+        );
     }
 
     #[test]
@@ -462,11 +484,16 @@ mod tests {
         // and how to fix it; one reported available must not claim a reason.
         for s in detect_all() {
             if s.available {
-                assert!(s.reason.is_none(), "{:?} available but gave a reason", s.backend);
+                assert!(
+                    s.reason.is_none(),
+                    "{:?} available but gave a reason",
+                    s.backend
+                );
             } else {
-                let r = s.reason.as_ref().unwrap_or_else(|| {
-                    panic!("{:?} unavailable with no reason", s.backend)
-                });
+                let r = s
+                    .reason
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{:?} unavailable with no reason", s.backend));
                 assert!(!r.is_empty());
                 assert!(
                     s.remedy.is_some(),
@@ -489,9 +516,15 @@ mod tests {
     fn libfuzzer_detection_requires_the_runtime_not_just_clang() {
         let s = detect_libfuzzer();
         if which("clang").is_some() && find_clang_runtime("fuzzer").is_none() {
-            assert!(!s.available, "clang without its runtime must not count as available");
+            assert!(
+                !s.available,
+                "clang without its runtime must not count as available"
+            );
             let r = s.reason.unwrap();
-            assert!(r.contains("libFuzzer runtime") || r.contains("libclang_rt"), "{r}");
+            assert!(
+                r.contains("libFuzzer runtime") || r.contains("libclang_rt"),
+                "{r}"
+            );
         }
     }
 
@@ -512,7 +545,10 @@ mod tests {
             assert!(!d.outputs.is_empty(), "{b:?}");
             assert!(!d.resource_limits.is_empty(), "{b:?}");
             assert!(!d.failure_modes.is_empty(), "{b:?}");
-            assert!(!d.capability_limitations.is_empty(), "{b:?} must state its limits");
+            assert!(
+                !d.capability_limitations.is_empty(),
+                "{b:?} must state its limits"
+            );
         }
     }
 
@@ -522,7 +558,10 @@ mod tests {
             Backend::from_instrumentation(Instrumentation::AetherNative),
             Backend::AetherNative
         );
-        assert_eq!(Backend::from_instrumentation(Instrumentation::None), Backend::BlackBox);
+        assert_eq!(
+            Backend::from_instrumentation(Instrumentation::None),
+            Backend::BlackBox
+        );
     }
 
     #[test]

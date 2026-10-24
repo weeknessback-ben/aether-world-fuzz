@@ -1,0 +1,54 @@
+# Two builds of the same program.
+#
+# A sanitizer sees faults that do not crash on their own - a heap overflow that
+# lands in unused memory, for example. But a clang sanitizer build may be
+# impossible where its runtime archives are missing, and gcc emits no
+# comparison log. So build both and let each do what it is good at:
+#
+#   ./runtime/aether-cc -o build/heap_oob fixtures/heap_oob.c
+#   ./runtime/aether-cc --cc gcc --sanitizer address \
+#       -o build/heap_oob_asan fixtures/heap_oob.c
+#
+# The campaign loop runs the fast build; the evidence engine re-runs candidates
+# against the oracle. Note that a sanitizer build cannot be bounded by
+# RLIMIT_AS - its shadow mapping needs about 20 TiB of address space - so the
+# engine bounds it with the sanitizer's own RSS limit and reports the swap.
+schema_version = 1
+
+[target]
+name = "heap_oob"
+kind = "executable"
+binary = "build/heap_oob"
+oracle_binary = "build/heap_oob_asan"
+input_mode = "stdin"
+timeout_ms = 2000
+memory_limit_mb = 1024
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 600
+workers = 1
+seed = 20260124
+max_input_bytes = 8192
+
+[strategies]
+enabled = ["cmplog-guided", "boundary", "havoc", "dictionary"]
+dictionary = ["LEN"]
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "cmplog", "sanitizer"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 64
+
+[reproduction]
+attempts = 10
+required_successes = 6
+minimize = true
+minimize_max_execs = 4000
+use_oracle_binary = true
+
+[output]
+dir = ".aether"
+report_formats = ["json", "markdown", "sarif"]

@@ -44,7 +44,9 @@ impl DictionaryStrategy {
                 continue;
             }
             // Take whatever is inside the first pair of double quotes.
-            let Some(start) = line.find('"') else { continue };
+            let Some(start) = line.find('"') else {
+                continue;
+            };
             let body = &line[start + 1..];
             let Some(end) = find_unescaped_quote(body) else {
                 return Err(Error::config(
@@ -71,7 +73,11 @@ impl DictionaryStrategy {
             .map(|i| {
                 let tries = self.token_tries[i] as f64;
                 let wins = self.token_wins[i] as f64;
-                0.25 + if tries > 0.0 { wins / tries * 4.0 } else { 0.75 }
+                0.25 + if tries > 0.0 {
+                    wins / tries * 4.0
+                } else {
+                    0.75
+                }
             })
             .collect();
         rng.weighted_index(&weights)
@@ -112,7 +118,6 @@ fn unescape(s: &str) -> Vec<u8> {
             b'r' => {
                 out.push(b'\r');
                 i += 2;
-            
             }
             b't' => {
                 out.push(b'\t');
@@ -198,7 +203,9 @@ impl Strategy for DictionaryStrategy {
         let mut out = Vec::with_capacity(budget as usize);
         for _ in 0..budget {
             let base = &bases[rng.below(bases.len())];
-            let Some(ti) = self.pick_token(rng) else { break };
+            let Some(ti) = self.pick_token(rng) else {
+                break;
+            };
             let token = self.tokens[ti].clone();
             self.token_tries[ti] += 1;
 
@@ -232,7 +239,12 @@ impl Strategy for DictionaryStrategy {
                 continue;
             }
             // note is "insert:<index>" or "overwrite:<index>".
-            if let Some(idx) = r.note.rsplit(':').next().and_then(|s| s.parse::<usize>().ok()) {
+            if let Some(idx) = r
+                .note
+                .rsplit(':')
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
                 if idx < self.token_wins.len() {
                     self.token_wins[idx] += 1;
                 }
@@ -300,7 +312,10 @@ newline="a\nb"
     fn structural_tokens_can_be_turned_off_leaving_nothing_to_do() {
         let dict: Vec<Vec<u8>> = Vec::new();
         let mut params = BTreeMap::new();
-        params.insert("dictionary_include_structural".into(), toml::Value::Integer(0));
+        params.insert(
+            "dictionary_include_structural".into(),
+            toml::Value::Integer(0),
+        );
         let mut s = DictionaryStrategy::default();
         let e = s.initialize(&ctx(&dict, None, &params)).unwrap_err();
         assert!(e.to_string().contains("no tokens available"), "{e}");
@@ -310,17 +325,27 @@ newline="a\nb"
     fn tokens_are_deduplicated() {
         let dict = vec![b"TLV1".to_vec(), b"TLV1".to_vec(), b"{".to_vec()];
         let mut params = BTreeMap::new();
-        params.insert("dictionary_include_structural".into(), toml::Value::Integer(0));
+        params.insert(
+            "dictionary_include_structural".into(),
+            toml::Value::Integer(0),
+        );
         let mut s = DictionaryStrategy::default();
         s.initialize(&ctx(&dict, None, &params)).unwrap();
-        assert_eq!(s.tokens.len(), 2, "duplicate tokens would get double the budget");
+        assert_eq!(
+            s.tokens.len(),
+            2,
+            "duplicate tokens would get double the budget"
+        );
     }
 
     #[test]
     fn proposed_inputs_contain_the_tokens() {
         let dict = vec![b"TLV1".to_vec()];
         let mut params = BTreeMap::new();
-        params.insert("dictionary_include_structural".into(), toml::Value::Integer(0));
+        params.insert(
+            "dictionary_include_structural".into(),
+            toml::Value::Integer(0),
+        );
         let mut s = DictionaryStrategy::default();
         s.initialize(&ctx(&dict, None, &params)).unwrap();
 
@@ -328,7 +353,9 @@ newline="a\nb"
         let cands = s.propose(64, &bases(&[b"........................"]), &mut rng);
         assert!(!cands.is_empty());
         assert!(
-            cands.iter().any(|c| c.bytes.windows(4).any(|w| w == b"TLV1")),
+            cands
+                .iter()
+                .any(|c| c.bytes.windows(4).any(|w| w == b"TLV1")),
             "no candidate contained the configured token"
         );
     }
@@ -337,7 +364,10 @@ newline="a\nb"
     fn respects_the_length_ceiling() {
         let dict = vec![vec![0x41; 32]];
         let mut params = BTreeMap::new();
-        params.insert("dictionary_include_structural".into(), toml::Value::Integer(0));
+        params.insert(
+            "dictionary_include_structural".into(),
+            toml::Value::Integer(0),
+        );
         let mut s = DictionaryStrategy::default();
         let mut c = ctx(&dict, None, &params);
         c.max_input_bytes = 16;
@@ -352,7 +382,10 @@ newline="a\nb"
     fn successful_tokens_are_tried_more_often() {
         let dict = vec![b"AAA".to_vec(), b"BBB".to_vec()];
         let mut params = BTreeMap::new();
-        params.insert("dictionary_include_structural".into(), toml::Value::Integer(0));
+        params.insert(
+            "dictionary_include_structural".into(),
+            toml::Value::Integer(0),
+        );
         let mut s = DictionaryStrategy::default();
         s.initialize(&ctx(&dict, None, &params)).unwrap();
         let winner = s.tokens.iter().position(|t| t == b"AAA").unwrap();
@@ -385,7 +418,10 @@ newline="a\nb"
         // rest of the dictionary forever.
         let dict: Vec<Vec<u8>> = (0..10).map(|i| vec![b'a' + i as u8; 3]).collect();
         let mut params = BTreeMap::new();
-        params.insert("dictionary_include_structural".into(), toml::Value::Integer(0));
+        params.insert(
+            "dictionary_include_structural".into(),
+            toml::Value::Integer(0),
+        );
         let mut s = DictionaryStrategy::default();
         s.initialize(&ctx(&dict, None, &params)).unwrap();
         s.token_tries[0] = 100;
@@ -398,6 +434,10 @@ newline="a\nb"
                 seen.insert(i);
             }
         }
-        assert!(seen.len() >= 9, "only {} of 10 tokens were ever picked", seen.len());
+        assert!(
+            seen.len() >= 9,
+            "only {} of 10 tokens were ever picked",
+            seen.len()
+        );
     }
 }

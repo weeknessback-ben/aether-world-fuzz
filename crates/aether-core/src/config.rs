@@ -102,19 +102,38 @@ pub struct TargetConfig {
     pub use_fork_server: bool,
 }
 
-fn default_input_mode() -> InputMode { InputMode::Stdin }
-fn default_timeout_ms() -> u64 { 1000 }
-fn default_memory_mb() -> u64 { 512 }
-fn default_instrumentation() -> Instrumentation { Instrumentation::AetherNative }
-fn default_true() -> bool { true }
+fn default_input_mode() -> InputMode {
+    InputMode::Stdin
+}
+fn default_timeout_ms() -> u64 {
+    1000
+}
+fn default_memory_mb() -> u64 {
+    512
+}
+fn default_instrumentation() -> Instrumentation {
+    Instrumentation::AetherNative
+}
+fn default_true() -> bool {
+    true
+}
 
 /// Environment variable names a target configuration may not set. These can
 /// redirect the dynamic loader or the sanitizer runtime, which would let a
 /// config file change what code runs or suppress the crash oracle.
 const FORBIDDEN_ENV: &[&str] = &[
-    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
-    "DYLD_LIBRARY_PATH", "ASAN_OPTIONS", "UBSAN_OPTIONS", "MSAN_OPTIONS",
-    "TSAN_OPTIONS", "AETHER_SHM_PATH", "AETHER_FORKSRV", "AETHER_CMPLOG",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "ASAN_OPTIONS",
+    "UBSAN_OPTIONS",
+    "MSAN_OPTIONS",
+    "TSAN_OPTIONS",
+    "AETHER_SHM_PATH",
+    "AETHER_FORKSRV",
+    "AETHER_CMPLOG",
 ];
 
 impl TargetConfig {
@@ -139,7 +158,10 @@ impl TargetConfig {
         }
         for key in self.env.keys() {
             if key.trim().is_empty() || key.contains('=') || key.contains('\0') {
-                return Err(Error::config("target.env", format!("invalid variable name {key:?}")));
+                return Err(Error::config(
+                    "target.env",
+                    format!("invalid variable name {key:?}"),
+                ));
             }
             if FORBIDDEN_ENV.iter().any(|f| f.eq_ignore_ascii_case(key)) {
                 return Err(Error::config(
@@ -156,9 +178,7 @@ impl TargetConfig {
                 return Err(Error::config("target.args", "argument contains a NUL byte"));
             }
         }
-        if self.input_mode == InputMode::FileArg
-            && !self.args.iter().any(|a| a.contains("@@"))
-        {
+        if self.input_mode == InputMode::FileArg && !self.args.iter().any(|a| a.contains("@@")) {
             return Err(Error::config(
                 "target.args",
                 "input_mode is file-arg but no argument contains the @@ placeholder",
@@ -204,10 +224,18 @@ pub struct CampaignLimits {
     pub stop_after_findings: u32,
 }
 
-fn default_duration() -> u64 { 60 }
-fn default_workers() -> u32 { 1 }
-fn default_seed() -> u64 { 0xA37_4E12 }
-fn default_max_input() -> usize { 65_536 }
+fn default_duration() -> u64 {
+    60
+}
+fn default_workers() -> u32 {
+    1
+}
+fn default_seed() -> u64 {
+    0xA37_4E12
+}
+fn default_max_input() -> usize {
+    65_536
+}
 
 impl Default for CampaignLimits {
     fn default() -> Self {
@@ -289,12 +317,24 @@ pub struct IntelConfig {
     pub corpus_weights: CorpusWeights,
 }
 
-fn default_scheduler() -> SchedulerKind { SchedulerKind::Thompson }
-fn default_round_budget() -> u32 { 64 }
-fn default_min_rounds() -> u32 { 3 }
-fn default_floor() -> f64 { 0.02 }
-fn default_stagnation_rounds() -> u32 { 24 }
-fn default_recovery() -> f64 { 0.15 }
+fn default_scheduler() -> SchedulerKind {
+    SchedulerKind::Thompson
+}
+fn default_round_budget() -> u32 {
+    64
+}
+fn default_min_rounds() -> u32 {
+    3
+}
+fn default_floor() -> f64 {
+    0.02
+}
+fn default_stagnation_rounds() -> u32 {
+    24
+}
+fn default_recovery() -> f64 {
+    0.15
+}
 
 impl Default for IntelConfig {
     fn default() -> Self {
@@ -414,9 +454,15 @@ pub struct ReproductionConfig {
     pub use_oracle_binary: bool,
 }
 
-fn default_attempts() -> u32 { 5 }
-fn default_required() -> u32 { 3 }
-fn default_min_rounds_minimize() -> u32 { 2000 }
+fn default_attempts() -> u32 {
+    5
+}
+fn default_required() -> u32 {
+    3
+}
+fn default_min_rounds_minimize() -> u32 {
+    2000
+}
 
 impl Default for ReproductionConfig {
     fn default() -> Self {
@@ -469,8 +515,12 @@ pub struct OptimizerConfig {
     pub compare_against_baseline: bool,
 }
 
-fn default_solver() -> String { "greedy".into() }
-fn default_solver_budget() -> u64 { 50 }
+fn default_solver() -> String {
+    "greedy".into()
+}
+fn default_solver_budget() -> u64 {
+    50
+}
 
 impl Default for OptimizerConfig {
     fn default() -> Self {
@@ -500,10 +550,18 @@ pub struct OutputConfig {
     pub telemetry_level: u8,
 }
 
-fn default_out_dir() -> PathBuf { PathBuf::from(".aether") }
-fn default_formats() -> Vec<String> { vec!["json".into(), "markdown".into()] }
-fn default_log_bytes() -> usize { 16 * 1024 }
-fn default_telemetry() -> u8 { 1 }
+fn default_out_dir() -> PathBuf {
+    PathBuf::from(".aether")
+}
+fn default_formats() -> Vec<String> {
+    vec!["json".into(), "markdown".into()]
+}
+fn default_log_bytes() -> usize {
+    16 * 1024
+}
+fn default_telemetry() -> u8 {
+    1
+}
 
 impl Default for OutputConfig {
     fn default() -> Self {
@@ -563,7 +621,10 @@ fn default_providers() -> Vec<String> {
 
 impl Default for FeedbackConfig {
     fn default() -> Self {
-        FeedbackConfig { providers: default_providers(), weights: BTreeMap::new() }
+        FeedbackConfig {
+            providers: default_providers(),
+            weights: BTreeMap::new(),
+        }
     }
 }
 
@@ -593,7 +654,7 @@ pub struct Config {
     pub output: OutputConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrategyConfig {
     /// Strategy ids to enable. Empty means "every registered strategy whose
@@ -614,22 +675,9 @@ pub struct StrategyConfig {
     pub params: BTreeMap<String, toml::Value>,
 }
 
-impl Default for StrategyConfig {
-    fn default() -> Self {
-        StrategyConfig {
-            enabled: Vec::new(),
-            dictionary: Vec::new(),
-            dictionary_file: None,
-            grammar_file: None,
-            params: BTreeMap::new(),
-        }
-    }
-}
-
 impl Config {
     pub fn from_toml_str(s: &str) -> Result<Self> {
-        let cfg: Config = toml::from_str(s)
-            .map_err(|e| Error::config("toml", e.to_string()))?;
+        let cfg: Config = toml::from_str(s).map_err(|e| Error::config("toml", e.to_string()))?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -712,8 +760,11 @@ pub fn apply_profile(cfg: &mut Config, profile: &str) -> Result<()> {
             cfg.campaign.duration_secs = 30;
             cfg.campaign.workers = 1;
             cfg.intel.round_budget = 32;
-            cfg.strategies.enabled =
-                vec!["havoc".into(), "random-mutation".into(), "cmplog-guided".into()];
+            cfg.strategies.enabled = vec![
+                "havoc".into(),
+                "random-mutation".into(),
+                "cmplog-guided".into(),
+            ];
         }
         "deep-exploration" => {
             cfg.campaign.duration_secs = 3600;
@@ -733,8 +784,11 @@ pub fn apply_profile(cfg: &mut Config, profile: &str) -> Result<()> {
         }
         "stateful-api" => {
             cfg.campaign.duration_secs = 600;
-            cfg.strategies.enabled =
-                vec!["stateful-sequence".into(), "dictionary".into(), "havoc".into()];
+            cfg.strategies.enabled = vec![
+                "stateful-sequence".into(),
+                "dictionary".into(),
+                "havoc".into(),
+            ];
             cfg.feedback.providers.push("state-transition".into());
         }
         "distributed" => {
@@ -774,7 +828,10 @@ pub fn apply_profile(cfg: &mut Config, profile: &str) -> Result<()> {
         other => {
             return Err(Error::config(
                 "profile",
-                format!("unknown profile {other:?}; known: {}", PROFILE_NAMES.join(", ")),
+                format!(
+                    "unknown profile {other:?}; known: {}",
+                    PROFILE_NAMES.join(", ")
+                ),
             ))
         }
     }
@@ -785,7 +842,9 @@ pub fn apply_profile(cfg: &mut Config, profile: &str) -> Result<()> {
 /// Workers to use when a profile asks for "all of them". Leaves one core for
 /// the controller and the operating system.
 pub fn num_workers_default() -> u32 {
-    let n = std::thread::available_parallelism().map(|v| v.get()).unwrap_or(1);
+    let n = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(1);
     (n.saturating_sub(1)).max(1) as u32
 }
 
@@ -810,7 +869,10 @@ binary = "/bin/true"
         assert_eq!(c.target.input_mode, InputMode::Stdin);
         assert_eq!(c.intel.scheduler, SchedulerKind::Thompson);
         assert!(!c.scope.allow_network_targets);
-        assert!(!c.optimizer.enabled, "the experimental optimizer must be opt-in");
+        assert!(
+            !c.optimizer.enabled,
+            "the experimental optimizer must be opt-in"
+        );
     }
 
     #[test]
@@ -838,7 +900,12 @@ binary = "/bin/true"
 
     #[test]
     fn loader_hijacking_env_is_refused() {
-        for var in ["LD_PRELOAD", "ld_preload", "ASAN_OPTIONS", "AETHER_SHM_PATH"] {
+        for var in [
+            "LD_PRELOAD",
+            "ld_preload",
+            "ASAN_OPTIONS",
+            "AETHER_SHM_PATH",
+        ] {
             let s = format!("{}\n[target.env]\n{var} = \"x\"\n", minimal());
             let e = Config::from_toml_str(&s).unwrap_err();
             assert!(e.to_string().contains("may not be set"), "{var}: {e}");
@@ -847,7 +914,10 @@ binary = "/bin/true"
 
     #[test]
     fn unbounded_campaign_is_refused() {
-        let s = format!("{}\n[campaign]\nduration_secs = 0\nmax_execs = 0\n", minimal());
+        let s = format!(
+            "{}\n[campaign]\nduration_secs = 0\nmax_execs = 0\n",
+            minimal()
+        );
         assert!(Config::from_toml_str(&s).is_err());
     }
 
@@ -885,7 +955,11 @@ binary = "/bin/true"
             "binary = \"/bin/true\"\ninstrumentation = \"none\"",
         );
         let e = Config::from_toml_str(&s).unwrap_err();
-        assert!(e.to_string().contains("edge-coverage requires instrumentation"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("edge-coverage requires instrumentation"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -905,7 +979,8 @@ binary = "/bin/true"
             apply_profile(&mut c, p).unwrap_or_else(|e| panic!("profile {p}: {e}"));
             // stateful-api pushes a provider; drop the instrumentation clash
             // check by keeping native instrumentation, which minimal() has.
-            c.validate().unwrap_or_else(|e| panic!("profile {p} produced invalid config: {e}"));
+            c.validate()
+                .unwrap_or_else(|e| panic!("profile {p} produced invalid config: {e}"));
             assert_eq!(c.profile.as_deref(), Some(*p));
         }
     }

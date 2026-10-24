@@ -344,11 +344,24 @@ mod tests {
         }
         // Diversifying is cheap; constraint solving is not, so it must come
         // last rather than being suggested immediately.
-        let div = seen.iter().position(|r| *r == Response::DiversifyStrategies);
-        let solve = seen.iter().position(|r| *r == Response::EscalateToConstraintSolving);
-        assert!(div.is_some(), "never suggested the cheap response: {seen:?}");
-        assert!(solve.is_some(), "never escalated to constraint solving: {seen:?}");
-        assert!(div < solve, "escalated to solving before trying cheap options: {seen:?}");
+        let div = seen
+            .iter()
+            .position(|r| *r == Response::DiversifyStrategies);
+        let solve = seen
+            .iter()
+            .position(|r| *r == Response::EscalateToConstraintSolving);
+        assert!(
+            div.is_some(),
+            "never suggested the cheap response: {seen:?}"
+        );
+        assert!(
+            solve.is_some(),
+            "never escalated to constraint solving: {seen:?}"
+        );
+        assert!(
+            div < solve,
+            "escalated to solving before trying cheap options: {seen:?}"
+        );
     }
 
     #[test]
@@ -377,7 +390,11 @@ mod tests {
             d.observe(true);
         }
         assert_eq!(d.phase(), Phase::Progressing);
-        assert_eq!(d.state().escalation_level, 0, "ladder not reset after recovery");
+        assert_eq!(
+            d.state().escalation_level,
+            0,
+            "ladder not reset after recovery"
+        );
     }
 
     #[test]
@@ -406,6 +423,9 @@ mod tests {
                 saw_slowing = true;
             }
         }
-        assert!(saw_slowing, "went straight to stagnant without reporting a slowdown");
+        assert!(
+            saw_slowing,
+            "went straight to stagnant without reporting a slowdown"
+        );
     }
 }

@@ -50,10 +50,18 @@ macro_rules! typed_id {
 }
 
 typed_id!(CampaignId, "cmp", "Identifies one campaign run.");
-typed_id!(InputId, "inp", "Identifies one corpus input (distinct from its content hash).");
+typed_id!(
+    InputId,
+    "inp",
+    "Identifies one corpus input (distinct from its content hash)."
+);
 typed_id!(FindingId, "fnd", "Identifies one finding record.");
 typed_id!(TargetId, "tgt", "Identifies one target definition.");
-typed_id!(JobId, "job", "Identifies one asynchronous job started through the API.");
+typed_id!(
+    JobId,
+    "job",
+    "Identifies one asynchronous job started through the API."
+);
 
 /// Identifiers must stay safe to use as a path component and as a SQL
 /// parameter. Anything outside `[A-Za-z0-9_-]` is refused rather than escaped,
@@ -66,7 +74,10 @@ pub(crate) fn validate_id_str(s: &str, expect_prefix: &str) -> crate::error::Res
             format!("length {} outside 1..=64", s.len()),
         ));
     }
-    if !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if !s
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         return Err(crate::error::Error::config(
             "identifier",
             format!("{s:?} contains characters outside [A-Za-z0-9_-]"),
@@ -120,7 +131,13 @@ mod tests {
 
     #[test]
     fn traversal_attempts_are_refused() {
-        for bad in ["cmp-../../etc/passwd", "cmp-a/b", "cmp-a;rm -rf /", "cmp-a\0b", ""] {
+        for bad in [
+            "cmp-../../etc/passwd",
+            "cmp-a/b",
+            "cmp-a;rm -rf /",
+            "cmp-a\0b",
+            "",
+        ] {
             let id = CampaignId::from_string(bad);
             assert!(id.validate().is_err(), "accepted dangerous id {bad:?}");
         }
@@ -128,13 +145,16 @@ mod tests {
 
     #[test]
     fn wrong_prefix_is_refused() {
-        assert!(CampaignId::from_string("fnd-0123456789abcdef").validate().is_err());
+        assert!(CampaignId::from_string("fnd-0123456789abcdef")
+            .validate()
+            .is_err());
     }
 
     #[test]
     fn ids_sort_in_minting_order() {
-        let minted: Vec<String> =
-            (0..500).map(|_| CampaignId::new().as_str().to_string()).collect();
+        let minted: Vec<String> = (0..500)
+            .map(|_| CampaignId::new().as_str().to_string())
+            .collect();
         let mut sorted = minted.clone();
         sorted.sort();
         // Lexicographic order must equal minting order: the timestamp prefix
@@ -148,6 +168,10 @@ mod tests {
         // ordering; a variable-length suffix would break it.
         let widths: std::collections::BTreeSet<usize> =
             (0..200).map(|_| CampaignId::new().as_str().len()).collect();
-        assert_eq!(widths.len(), 1, "identifier width must not vary: {widths:?}");
+        assert_eq!(
+            widths.len(),
+            1,
+            "identifier width must not vary: {widths:?}"
+        );
     }
 }

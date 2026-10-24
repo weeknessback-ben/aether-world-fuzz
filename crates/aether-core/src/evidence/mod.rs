@@ -92,7 +92,10 @@ impl FindingStatus {
 
     /// Whether this status represents an established defect. Only two do.
     pub fn is_confirmed(&self) -> bool {
-        matches!(self, FindingStatus::Reproducible | FindingStatus::Intermittent)
+        matches!(
+            self,
+            FindingStatus::Reproducible | FindingStatus::Intermittent
+        )
     }
 
     /// Valid next states.
@@ -425,7 +428,11 @@ mod tests {
         let mut f = finding();
         let e = f.transition(FindingStatus::Reproducible).unwrap_err();
         assert_eq!(e.kind(), "invalid_transition");
-        assert_eq!(f.status, FindingStatus::Candidate, "status changed despite the error");
+        assert_eq!(
+            f.status,
+            FindingStatus::Candidate,
+            "status changed despite the error"
+        );
     }
 
     #[test]
@@ -446,7 +453,10 @@ mod tests {
             FindingStatus::Candidate,
             FindingStatus::Duplicate,
         ] {
-            assert!(f.transition(next).is_err(), "closed finding accepted {next:?}");
+            assert!(
+                f.transition(next).is_err(),
+                "closed finding accepted {next:?}"
+            );
         }
     }
 
@@ -518,8 +528,17 @@ mod tests {
             (1, 1, 1, FindingStatus::Reproducible),
         ];
         for (attempts, successes, required, want) in cases {
-            let r = ReproductionRecord { attempts, successes, required, ..Default::default() };
-            assert_eq!(r.implied_status(), want, "{attempts}/{successes}/{required}");
+            let r = ReproductionRecord {
+                attempts,
+                successes,
+                required,
+                ..Default::default()
+            };
+            assert_eq!(
+                r.implied_status(),
+                want,
+                "{attempts}/{successes}/{required}"
+            );
         }
     }
 
@@ -537,8 +556,14 @@ mod tests {
             Finding::severity_for(ExitClass::SanitizerFault, Some(&san)),
             Severity::MemorySafety
         );
-        assert_eq!(Finding::severity_for(ExitClass::Crash, None), Severity::Crash);
-        assert_eq!(Finding::severity_for(ExitClass::Timeout, None), Severity::Hang);
+        assert_eq!(
+            Finding::severity_for(ExitClass::Crash, None),
+            Severity::Crash
+        );
+        assert_eq!(
+            Finding::severity_for(ExitClass::Timeout, None),
+            Severity::Hang
+        );
     }
 
     #[test]
@@ -573,7 +598,9 @@ mod tests {
         }
         // The memory-safety note must say explicitly that exploitability is
         // not assessed, since that is the one a reader will over-read.
-        assert!(Severity::MemorySafety.evidence_note().contains("not been assessed"));
+        assert!(Severity::MemorySafety
+            .evidence_note()
+            .contains("not been assessed"));
     }
 
     #[test]
@@ -605,7 +632,10 @@ mod tests {
             FindingStatus::Duplicate,
             FindingStatus::Closed,
         ] {
-            assert!(!s.is_confirmed(), "{s:?} must not count as an established defect");
+            assert!(
+                !s.is_confirmed(),
+                "{s:?} must not count as an established defect"
+            );
         }
     }
 
@@ -615,7 +645,10 @@ mod tests {
         let original = f.evidence.trigger_hash.clone();
         f.evidence.minimized_hash = Some("cd".repeat(16));
         f.evidence.minimized_size = Some(4);
-        assert_eq!(f.evidence.trigger_hash, original, "original input hash was lost");
+        assert_eq!(
+            f.evidence.trigger_hash, original,
+            "original input hash was lost"
+        );
     }
 
     #[test]
@@ -625,8 +658,14 @@ mod tests {
         let f = finding();
         assert!(!f.evidence.reproduce_argv.is_empty());
         for arg in &f.evidence.reproduce_argv {
-            assert!(!arg.contains("&&"), "argv entry looks like a shell line: {arg}");
-            assert!(!arg.contains('|'), "argv entry looks like a shell line: {arg}");
+            assert!(
+                !arg.contains("&&"),
+                "argv entry looks like a shell line: {arg}"
+            );
+            assert!(
+                !arg.contains('|'),
+                "argv entry looks like a shell line: {arg}"
+            );
         }
     }
 

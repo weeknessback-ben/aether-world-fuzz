@@ -1,0 +1,29 @@
+# Dictionary for fixtures/toy_parser.c, in the AFL format.
+#
+# A random mutation will essentially never produce the string "TLV1", so for a
+# format-driven target a dictionary is the difference between parsing and being
+# rejected at byte 0.
+
+# Stream header.
+header="TLV1"
+
+# Record marker and the three valid type bytes.
+marker="T"
+type_integer="\x01"
+type_string="\x02"
+type_nested="\x03"
+
+# An invalid type, to exercise the rejection path.
+type_invalid="\xff"
+
+# Length bytes worth trying: zero, small, and the maximum a single byte holds.
+len_zero="\x00"
+len_two="\x02"
+len_max="\xff"
+
+# Short payloads.
+payload_ab="ab"
+payload_abcd="abcd"
+
+# A complete minimal record, so a mutation can insert one whole.
+record_min="T\x01\x02ab"

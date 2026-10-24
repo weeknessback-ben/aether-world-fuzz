@@ -96,7 +96,10 @@ pub fn fixture(stem: &str, build: Build) -> PathBuf {
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
-    assert!(out.exists(), "aether-cc reported success but produced no binary");
+    assert!(
+        out.exists(),
+        "aether-cc reported success but produced no binary"
+    );
     out
 }
 

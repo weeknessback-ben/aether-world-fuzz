@@ -66,7 +66,10 @@ pub fn open_store(dir: &Path) -> Result<Store> {
     if !path.exists() {
         return Err(Error::not_found(
             "campaign store",
-            format!("{} (no campaign has been run in this directory)", path.display()),
+            format!(
+                "{} (no campaign has been run in this directory)",
+                path.display()
+            ),
         ));
     }
     Store::open(&path)
@@ -106,9 +109,7 @@ pub fn latest_campaign(store: &Store) -> Result<String> {
             |r| r.get(0),
         )
         .optional()?;
-    id.ok_or_else(|| {
-        Error::not_found("campaign", "none recorded; run `aether campaign run` first")
-    })
+    id.ok_or_else(|| Error::not_found("campaign", "none recorded; run `aether campaign run` first"))
 }
 
 /// Resolve an optional id to a concrete one, validating anything supplied.
@@ -192,7 +193,9 @@ fn map_finding(r: &rusqlite::Row<'_>) -> rusqlite::Result<FindingRow> {
         trigger_hash: r.get(9)?,
         minimized_hash: r.get(10)?,
         created_at: crate::time::format_rfc3339(r.get::<_, i64>(11)? as u64),
-        evidence: evidence.as_deref().and_then(|s| serde_json::from_str(s).ok()),
+        evidence: evidence
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok()),
         notes: notes
             .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
@@ -311,7 +314,12 @@ mod tests {
         // A caller asking for a huge limit must not be able to request an
         // unbounded result set.
         assert!(list_campaigns(&s, usize::MAX).unwrap().len() <= 2);
-        assert!(list_findings(&s, "cmp-0000000000000001", None, usize::MAX).unwrap().len() <= 2);
+        assert!(
+            list_findings(&s, "cmp-0000000000000001", None, usize::MAX)
+                .unwrap()
+                .len()
+                <= 2
+        );
     }
 
     #[test]
@@ -321,7 +329,10 @@ mod tests {
         let empty = Store::open_in_memory().unwrap();
         let e = latest_campaign(&empty).unwrap_err();
         assert_eq!(e.kind(), "not_found");
-        assert!(e.to_string().contains("campaign run"), "should say what to do: {e}");
+        assert!(
+            e.to_string().contains("campaign run"),
+            "should say what to do: {e}"
+        );
     }
 
     #[test]
@@ -329,7 +340,11 @@ mod tests {
         let s = store_with_data();
         // Path traversal and shell metacharacters are refused by validation
         // before reaching a statement.
-        for bad in ["../../etc/passwd", "cmp-a;DROP TABLE campaigns", "' OR 1=1 --"] {
+        for bad in [
+            "../../etc/passwd",
+            "cmp-a;DROP TABLE campaigns",
+            "' OR 1=1 --",
+        ] {
             assert!(resolve_campaign(&s, Some(bad)).is_err(), "accepted {bad:?}");
         }
         // Well-formed but absent.

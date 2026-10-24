@@ -50,8 +50,12 @@ fn measure(mut exec: NativeExecutor, runs: u32, label: &str) -> f64 {
 
 #[test]
 fn execution_throughput() {
-    println!("\n=== AETHER execution throughput ({} cores) ===",
-             std::thread::available_parallelism().map(|v| v.get()).unwrap_or(0));
+    println!(
+        "\n=== AETHER execution throughput ({} cores) ===",
+        std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(0)
+    );
 
     let runs = 1200;
 
@@ -93,10 +97,8 @@ fn execution_throughput() {
     // every execution, so where they live is part of the hot path.
     let tmpfs_eps = if std::path::Path::new("/dev/shm").is_dir() {
         let cfg5 = Config::from_toml_str(&config_toml_for(&bin, "")).unwrap();
-        let p = std::path::PathBuf::from("/dev/shm").join(format!(
-            "aether-perf-{}",
-            std::process::id()
-        ));
+        let p = std::path::PathBuf::from("/dev/shm")
+            .join(format!("aether-perf-{}", std::process::id()));
         std::fs::create_dir_all(&p).unwrap();
         let spec5 = TargetSpec::from_config(&cfg5.target, &ScopePolicy::default(), 4096).unwrap();
         let e5 = NativeExecutor::new(spec5, &p).unwrap();
@@ -107,14 +109,24 @@ fn execution_throughput() {
         None
     };
 
-    println!("\n  fork server speedup over exec-per-run: {:.2}x", fs_eps / exec_eps);
+    println!(
+        "\n  fork server speedup over exec-per-run: {:.2}x",
+        fs_eps / exec_eps
+    );
     if let Some(t) = tmpfs_eps {
-        println!("  tmpfs scratch vs default scratch:      {:+.1}%", (t - fs_eps) / fs_eps * 100.0);
+        println!(
+            "  tmpfs scratch vs default scratch:      {:+.1}%",
+            (t - fs_eps) / fs_eps * 100.0
+        );
     }
-    println!("  comparison log overhead:               {:.1}%",
-             (fs_nocmp_eps - fs_eps) / fs_nocmp_eps * 100.0);
-    println!("  instrumentation overhead (exec path):  {:.1}%\n",
-             (plain_eps - exec_eps) / plain_eps * 100.0);
+    println!(
+        "  comparison log overhead:               {:.1}%",
+        (fs_nocmp_eps - fs_eps) / fs_nocmp_eps * 100.0
+    );
+    println!(
+        "  instrumentation overhead (exec path):  {:.1}%\n",
+        (plain_eps - exec_eps) / plain_eps * 100.0
+    );
 
     // The one thing that must hold: if the fork server were slower, it would
     // be costing more than it saves and should not be the default.

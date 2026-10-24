@@ -1,0 +1,53 @@
+# A CI gate.
+#
+# Two choices matter here. A fixed execution budget rather than a duration, so
+# the job does the same work on every runner and does not fail on a slow one.
+# And report_formats including sarif, so findings can be uploaded to code
+# scanning.
+#
+#   aether campaign run --config examples/ci-gate.toml
+#   # exit 3 means findings were confirmed
+#
+# To collect findings without failing the build, add --no-fail-on-findings and
+# upload the SARIF.
+schema_version = 1
+
+[target]
+name = "parser"
+kind = "executable"
+binary = "build/parser"
+input_mode = "stdin"
+timeout_ms = 1000
+memory_limit_mb = 512
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 0
+max_execs = 200000
+workers = 1
+seed = 20260124
+max_input_bytes = 16384
+# Stop as soon as something is confirmed: a gate does not need to keep looking
+# once it has an answer.
+stop_after_findings = 1
+
+[strategies]
+enabled = ["cmplog-guided", "havoc", "dictionary", "boundary"]
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "cmplog", "sanitizer"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 64
+
+[reproduction]
+# A gate should not fail a build on something that happened once, so the
+# threshold is strict.
+attempts = 10
+required_successes = 7
+minimize = true
+
+[output]
+dir = ".aether"
+report_formats = ["json", "sarif"]

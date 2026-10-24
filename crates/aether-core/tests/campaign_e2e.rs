@@ -24,12 +24,7 @@ use aether_core::runtime::{Campaign, Cancel, StopReason};
 use common::{fixture, Build, Scratch};
 
 /// Build a campaign config for a fixture, with a short budget.
-fn config_for(
-    stem: &str,
-    build: Build,
-    out_dir: &std::path::Path,
-    extra: &str,
-) -> Config {
+fn config_for(stem: &str, build: Build, out_dir: &std::path::Path, extra: &str) -> Config {
     let bin = fixture(stem, build);
     let toml = format!(
         r#"
@@ -110,9 +105,18 @@ fn finds_reproduces_and_minimises_a_planted_defect() {
         "minimised input ({min_size}) is larger than the original ({})",
         f.evidence.trigger_size
     );
-    assert!(f.reproduction.minimized_validated, "minimised input was not re-validated");
-    assert!(!f.evidence.trigger_hash.is_empty(), "original input hash was lost");
-    assert_eq!(f.discovered_by.is_some(), true, "finding should name its strategy");
+    assert!(
+        f.reproduction.minimized_validated,
+        "minimised input was not re-validated"
+    );
+    assert!(
+        !f.evidence.trigger_hash.is_empty(),
+        "original input hash was lost"
+    );
+    assert!(
+        f.discovered_by.is_some(),
+        "finding should name its strategy"
+    );
 }
 
 #[test]
@@ -192,8 +196,7 @@ fn comparison_guided_substitution_beats_blind_mutation_on_a_magic_ladder() {
     };
 
     let (cmp_execs, cmp_found, cmp_edges) = run("[\"cmplog-guided\"]", "e2e-ladder-cmp");
-    let (blind_execs, blind_found, blind_edges) =
-        run("[\"random-mutation\"]", "e2e-ladder-blind");
+    let (blind_execs, blind_found, blind_edges) = run("[\"random-mutation\"]", "e2e-ladder-blind");
 
     println!(
         "cmplog-guided: {cmp_execs} execs, {cmp_edges} edges, found={cmp_found}\n\
@@ -273,13 +276,20 @@ fn coverage_and_corpus_grow_on_a_coverage_gradient() {
     let (c, reason) = run_campaign(cfg);
     let r = c.report(Some(reason)).unwrap();
 
-    assert!(r.coverage.total_edges > 1, "coverage did not grow: {:?}", r.coverage);
+    assert!(
+        r.coverage.total_edges > 1,
+        "coverage did not grow: {:?}",
+        r.coverage
+    );
     assert!(
         r.corpus.entries > 1,
         "corpus did not grow beyond the bootstrap entry: {:?}",
         r.corpus
     );
-    assert!(r.coverage.guard_count.is_some(), "instrumented target should report guards");
+    assert!(
+        r.coverage.guard_count.is_some(),
+        "instrumented target should report guards"
+    );
     assert!(r.coverage.saturation.is_some());
     assert!(r.environment.edge_coverage);
     assert!(r.environment.fork_server, "fork server should be in use");
@@ -300,7 +310,10 @@ fn reports_are_written_in_every_configured_format() {
     }
 
     // The SARIF file must parse and declare the tool.
-    let sarif = written.iter().find(|p| p.to_string_lossy().contains("sarif")).unwrap();
+    let sarif = written
+        .iter()
+        .find(|p| p.to_string_lossy().contains("sarif"))
+        .unwrap();
     let v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(sarif).unwrap()).unwrap();
     assert_eq!(v["version"], "2.1.0");
@@ -317,7 +330,9 @@ fn report_records_capabilities_and_limitations_honestly() {
 
     // The adapters that are not usable on this host must be named.
     assert!(
-        r.limitations.iter().any(|l| l.contains("libfuzzer") || l.contains("aflplusplus")),
+        r.limitations
+            .iter()
+            .any(|l| l.contains("libfuzzer") || l.contains("aflplusplus")),
         "limitations do not mention the unavailable backends: {:?}",
         r.limitations
     );
@@ -328,7 +343,10 @@ fn report_records_capabilities_and_limitations_honestly() {
         r.limitations
     );
     assert!(!r.environment.sanitizer_oracle);
-    assert_eq!(r.seed, 20260124, "seed must be recorded so the run can be replayed");
+    assert_eq!(
+        r.seed, 20260124,
+        "seed must be recorded so the run can be replayed"
+    );
 }
 
 #[test]
@@ -382,7 +400,11 @@ fn the_research_benchmark_profile_replays_a_campaign_closely() {
         cfg.campaign.seed = 20260124;
         let (c, reason) = run_campaign(cfg);
         let r = c.report(Some(reason)).unwrap();
-        (r.execution.total_executions, r.coverage.total_edges, r.corpus.entries)
+        (
+            r.execution.total_executions,
+            r.coverage.total_edges,
+            r.corpus.entries,
+        )
     };
     let a = run("e2e-repro-a");
     let b = run("e2e-repro-b");
@@ -435,7 +457,9 @@ fn the_execution_layer_is_deterministic() {
         t.total_edges()
     };
 
-    let runs: Vec<u32> = (0..4).map(|i| replay(&format!("e2e-exec-det-{i}"))).collect();
+    let runs: Vec<u32> = (0..4)
+        .map(|i| replay(&format!("e2e-exec-det-{i}")))
+        .collect();
     assert!(
         runs.windows(2).all(|w| w[0] == w[1]),
         "identical input sequences produced different coverage: {runs:?}"

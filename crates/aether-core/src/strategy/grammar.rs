@@ -62,7 +62,10 @@ impl Grammar {
             if !(name.starts_with('<') && name.ends_with('>') && name.len() > 2) {
                 return Err(Error::config(
                     "grammar",
-                    format!("line {}: rule name must look like <name>, got {name:?}", i + 1),
+                    format!(
+                        "line {}: rule name must look like <name>, got {name:?}",
+                        i + 1
+                    ),
                 ));
             }
             let name = name[1..name.len() - 1].to_string();
@@ -118,7 +121,9 @@ impl Grammar {
         if out.len() >= max_len {
             return;
         }
-        let Some(alts) = self.rules.get(rule) else { return };
+        let Some(alts) = self.rules.get(rule) else {
+            return;
+        };
         if alts.is_empty() {
             return;
         }
@@ -276,7 +281,10 @@ impl Strategy for GrammarStrategy {
 
     fn initialize(&mut self, ctx: &StrategyContext<'_>) -> Result<()> {
         let text = ctx.grammar_text.ok_or_else(|| {
-            Error::config("strategies.grammar_file", "the grammar strategy needs a grammar")
+            Error::config(
+                "strategies.grammar_file",
+                "the grammar strategy needs a grammar",
+            )
         })?;
         self.grammar = Grammar::parse(text)?;
         self.max_len = ctx.max_input_bytes;
@@ -289,8 +297,14 @@ impl Strategy for GrammarStrategy {
         let mut out = Vec::with_capacity(budget as usize);
         for _ in 0..budget {
             let mut buf = Vec::new();
-            self.grammar
-                .expand(&self.grammar.start.clone(), 0, self.max_depth, &mut buf, self.max_len, rng);
+            self.grammar.expand(
+                &self.grammar.start.clone(),
+                0,
+                self.max_depth,
+                &mut buf,
+                self.max_len,
+                rng,
+            );
             if buf.is_empty() {
                 continue;
             }
@@ -302,7 +316,11 @@ impl Strategy for GrammarStrategy {
             } else {
                 "generated"
             };
-            out.push(Candidate { bytes: buf, parent: None, note: note.into() });
+            out.push(Candidate {
+                bytes: buf,
+                parent: None,
+                note: note.into(),
+            });
         }
         out
     }
@@ -439,7 +457,10 @@ mod tests {
         let run = || {
             let mut s = built(TLV, &params);
             let mut rng = Rng::from_seed(77);
-            s.propose(20, &[], &mut rng).into_iter().map(|c| c.bytes).collect::<Vec<_>>()
+            s.propose(20, &[], &mut rng)
+                .into_iter()
+                .map(|c| c.bytes)
+                .collect::<Vec<_>>()
         };
         assert_eq!(run(), run());
     }

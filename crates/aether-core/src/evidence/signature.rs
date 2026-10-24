@@ -90,7 +90,12 @@ fn from_sanitizer(report: &SanitizerReport, outcome: &ExecOutcome) -> Signature 
     let label = if frames.is_empty() {
         format!("{}: {}", report.kind.as_str(), report.fault)
     } else {
-        format!("{}: {} in {}", report.kind.as_str(), report.fault, frames[0])
+        format!(
+            "{}: {} in {}",
+            report.kind.as_str(),
+            report.fault,
+            frames[0]
+        )
     };
     Signature { hash, label, parts }
 }
@@ -103,7 +108,11 @@ fn from_signal(outcome: &ExecOutcome) -> Signature {
         // The exit code is excluded when the process was signalled: there is
         // no meaningful code, and including None-vs-Some would split one
         // defect across two signatures.
-        exit_code: if sig.is_some() { None } else { outcome.exit_code },
+        exit_code: if sig.is_some() {
+            None
+        } else {
+            outcome.exit_code
+        },
         sanitizer_kind: None,
         fault: None,
         frames: Vec::new(),
@@ -204,13 +213,21 @@ mod tests {
         let a = signature_for(&outcome(
             ExitClass::SanitizerFault,
             Some(libc::SIGABRT),
-            Some(report("heap-buffer-overflow", &["parse", "main"], Some("write"))),
+            Some(report(
+                "heap-buffer-overflow",
+                &["parse", "main"],
+                Some("write"),
+            )),
         ))
         .unwrap();
         let b = signature_for(&outcome(
             ExitClass::SanitizerFault,
             Some(libc::SIGABRT),
-            Some(report("heap-buffer-overflow", &["parse", "main"], Some("write"))),
+            Some(report(
+                "heap-buffer-overflow",
+                &["parse", "main"],
+                Some("write"),
+            )),
         ))
         .unwrap();
         assert_eq!(a.hash, b.hash);
@@ -247,7 +264,10 @@ mod tests {
             Some(report("heap-buffer-overflow", &["f"], Some("write"))),
         ))
         .unwrap();
-        assert_ne!(r.hash, w.hash, "a read and a write are usually different defects");
+        assert_ne!(
+            r.hash, w.hash,
+            "a read and a write are usually different defects"
+        );
     }
 
     #[test]
@@ -257,7 +277,11 @@ mod tests {
         let shallow = signature_for(&outcome(
             ExitClass::SanitizerFault,
             Some(libc::SIGABRT),
-            Some(report("heap-buffer-overflow", &["memcpy", "copy", "parse"], Some("write"))),
+            Some(report(
+                "heap-buffer-overflow",
+                &["memcpy", "copy", "parse"],
+                Some("write"),
+            )),
         ))
         .unwrap();
         let deep = signature_for(&outcome(
@@ -281,13 +305,21 @@ mod tests {
         let a = signature_for(&outcome(
             ExitClass::SanitizerFault,
             Some(libc::SIGABRT),
-            Some(report("heap-buffer-overflow", &["memcpy", "parse"], Some("write"))),
+            Some(report(
+                "heap-buffer-overflow",
+                &["memcpy", "parse"],
+                Some("write"),
+            )),
         ))
         .unwrap();
         let b = signature_for(&outcome(
             ExitClass::SanitizerFault,
             Some(libc::SIGABRT),
-            Some(report("heap-buffer-overflow", &["strcpy", "parse"], Some("write"))),
+            Some(report(
+                "heap-buffer-overflow",
+                &["strcpy", "parse"],
+                Some("write"),
+            )),
         ))
         .unwrap();
         assert_ne!(a.hash, b.hash);
@@ -339,7 +371,11 @@ mod tests {
         let s = signature_for(&outcome(
             ExitClass::SanitizerFault,
             Some(libc::SIGABRT),
-            Some(report("heap-buffer-overflow", &["parse", "main"], Some("write"))),
+            Some(report(
+                "heap-buffer-overflow",
+                &["parse", "main"],
+                Some("write"),
+            )),
         ))
         .unwrap();
         // Nothing build- or run-specific may appear in the parts, or the same

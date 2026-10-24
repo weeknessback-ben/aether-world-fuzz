@@ -59,7 +59,10 @@ mod tests {
     fn formats_known_epochs() {
         assert_eq!(format_rfc3339(0), "1970-01-01T00:00:00.000Z");
         // 2024-02-29T12:34:56.789Z - a leap day, to exercise the calendar math.
-        assert_eq!(format_rfc3339(1_709_210_096_789), "2024-02-29T12:34:56.789Z");
+        assert_eq!(
+            format_rfc3339(1_709_210_096_789),
+            "2024-02-29T12:34:56.789Z"
+        );
     }
 
     #[test]

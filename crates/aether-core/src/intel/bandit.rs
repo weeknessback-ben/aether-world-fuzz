@@ -39,7 +39,12 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(stagnant_rounds: u32, stagnation_threshold: u32, corpus_size: u64, saturation: Option<f64>) -> Self {
+    pub fn new(
+        stagnant_rounds: u32,
+        stagnation_threshold: u32,
+        corpus_size: u64,
+        saturation: Option<f64>,
+    ) -> Self {
         let progress = if stagnant_rounds == 0 {
             0
         } else if stagnant_rounds < stagnation_threshold {
@@ -58,12 +63,20 @@ impl Context {
             Some(s) if s < 0.66 => 1,
             Some(_) => 2,
         };
-        Context { progress, corpus, saturation }
+        Context {
+            progress,
+            corpus,
+            saturation,
+        }
     }
 
     /// Context used before anything has been measured.
     pub fn initial() -> Self {
-        Context { progress: 0, corpus: 0, saturation: 3 }
+        Context {
+            progress: 0,
+            corpus: 0,
+            saturation: 3,
+        }
     }
 }
 
@@ -240,9 +253,8 @@ impl Scheduler {
     }
 
     fn under_trialled(&self, ctx: Context) -> Option<usize> {
-        (0..self.arms.len()).find(|&i| {
-            self.stats.get(&(ctx, i)).map(|s| s.rounds).unwrap_or(0) < self.min_rounds
-        })
+        (0..self.arms.len())
+            .find(|&i| self.stats.get(&(ctx, i)).map(|s| s.rounds).unwrap_or(0) < self.min_rounds)
     }
 
     /// Thompson Sampling over per-arm Beta posteriors, scaled by observed
@@ -283,7 +295,11 @@ impl Scheduler {
                 best = i;
             }
         }
-        (best, scores, format!("highest Thompson sample ({best_score:.4})"))
+        (
+            best,
+            scores,
+            format!("highest Thompson sample ({best_score:.4})"),
+        )
     }
 
     /// UCB1 with cost normalisation.
@@ -310,7 +326,10 @@ impl Scheduler {
                 (2.0 * total.ln() / s.rounds as f64).sqrt()
             };
             let score = mean + bonus;
-            scores.push((self.arms[i].clone(), if score.is_finite() { score } else { 1e9 }));
+            scores.push((
+                self.arms[i].clone(),
+                if score.is_finite() { score } else { 1e9 },
+            ));
             if score > best_score {
                 best_score = score;
                 best = i;
@@ -456,9 +475,27 @@ mod tests {
     /// arm 2 is productive but expensive.
     fn simulate(arm: usize) -> RoundOutcome {
         match arm {
-            0 => RoundOutcome { executions: 32, value: 10.0, cost_micros: 1_000, new_edges: 5, findings: 0 },
-            1 => RoundOutcome { executions: 32, value: 0.0, cost_micros: 1_000, new_edges: 0, findings: 0 },
-            _ => RoundOutcome { executions: 32, value: 10.0, cost_micros: 50_000, new_edges: 5, findings: 0 },
+            0 => RoundOutcome {
+                executions: 32,
+                value: 10.0,
+                cost_micros: 1_000,
+                new_edges: 5,
+                findings: 0,
+            },
+            1 => RoundOutcome {
+                executions: 32,
+                value: 0.0,
+                cost_micros: 1_000,
+                new_edges: 0,
+                findings: 0,
+            },
+            _ => RoundOutcome {
+                executions: 32,
+                value: 10.0,
+                cost_micros: 50_000,
+                new_edges: 5,
+                findings: 0,
+            },
         }
     }
 
@@ -487,7 +524,11 @@ mod tests {
             counts[a] += 1;
             s.update(ctx, a, simulate(a));
         }
-        assert_eq!(counts, vec![2, 2, 2], "minimum trials were not spread evenly");
+        assert_eq!(
+            counts,
+            vec![2, 2, 2],
+            "minimum trials were not spread evenly"
+        );
     }
 
     #[test]
@@ -504,8 +545,15 @@ mod tests {
         let bad = alloc.iter().find(|(n, _)| n == "bad").unwrap().1;
         let mid = alloc.iter().find(|(n, _)| n == "middling").unwrap().1;
 
-        assert!(good > 0.5, "productive arm got only {:.0}% of rounds", good * 100.0);
-        assert!(good > bad * 3.0, "unproductive arm not de-prioritised: {good:.3} vs {bad:.3}");
+        assert!(
+            good > 0.5,
+            "productive arm got only {:.0}% of rounds",
+            good * 100.0
+        );
+        assert!(
+            good > bad * 3.0,
+            "unproductive arm not de-prioritised: {good:.3} vs {bad:.3}"
+        );
         assert!(
             good > mid,
             "the expensive arm with equal value should lose on cost: {good:.3} vs {mid:.3}"
@@ -562,7 +610,11 @@ mod tests {
             s.update(ctx, a, simulate(a));
         }
         let bad = s.stats_for(ctx, 1);
-        assert!(bad.rounds > 20, "starved arm got only {} rounds", bad.rounds);
+        assert!(
+            bad.rounds > 20,
+            "starved arm got only {} rounds",
+            bad.rounds
+        );
     }
 
     #[test]
@@ -604,8 +656,16 @@ mod tests {
         // scheduler would average these into indifference.
         let mut s = Scheduler::new(SchedulerKind::Thompson, arms(), 32, 2, 0.0);
         let mut rng = Rng::from_seed(8);
-        let early = Context { progress: 0, corpus: 0, saturation: 0 };
-        let late = Context { progress: 2, corpus: 2, saturation: 2 };
+        let early = Context {
+            progress: 0,
+            corpus: 0,
+            saturation: 0,
+        };
+        let late = Context {
+            progress: 2,
+            corpus: 2,
+            saturation: 2,
+        };
 
         for _ in 0..200 {
             let a = s.select(early, &mut rng);
@@ -636,9 +696,16 @@ mod tests {
             s.update(a_ctx, a, simulate(a));
         }
         // A context never seen before should still start from what is known.
-        let fresh = Context { progress: 2, corpus: 2, saturation: 1 };
+        let fresh = Context {
+            progress: 2,
+            corpus: 2,
+            saturation: 1,
+        };
         let inherited = s.effective_stats(fresh, 0);
-        assert!(inherited.rounds > 0, "global prior was discarded for a new context");
+        assert!(
+            inherited.rounds > 0,
+            "global prior was discarded for a new context"
+        );
     }
 
     #[test]
@@ -650,11 +717,18 @@ mod tests {
             let a = s.select(ctx, &mut rng);
             s.update(ctx, a, simulate(a));
         }
-        assert!(s.decisions().len() <= 512, "decision log grew to {}", s.decisions().len());
+        assert!(
+            s.decisions().len() <= 512,
+            "decision log grew to {}",
+            s.decisions().len()
+        );
         let d = s.decisions().last().unwrap();
         assert!(!d.strategy.is_empty());
         assert!(!d.reason.is_empty());
-        assert!(!d.scores.is_empty(), "a Thompson decision should carry per-arm scores");
+        assert!(
+            !d.scores.is_empty(),
+            "a Thompson decision should carry per-arm scores"
+        );
     }
 
     #[test]
@@ -672,7 +746,10 @@ mod tests {
         s2.restore_state(&state);
         assert_eq!(s2.round(), s.round());
         assert_eq!(s2.global_stats()[0].rounds, s.global_stats()[0].rounds);
-        assert_eq!(s2.global_stats()[0].value_sum, s.global_stats()[0].value_sum);
+        assert_eq!(
+            s2.global_stats()[0].value_sum,
+            s.global_stats()[0].value_sum
+        );
     }
 
     #[test]

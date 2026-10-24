@@ -83,7 +83,11 @@ pub struct Qubo {
 
 impl Qubo {
     pub fn new(n: usize) -> Self {
-        Qubo { n, q: vec![0.0; n * n], offset: 0.0 }
+        Qubo {
+            n,
+            q: vec![0.0; n * n],
+            offset: 0.0,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -131,13 +135,13 @@ impl Qubo {
     /// Full energy of an assignment.
     pub fn energy(&self, x: &[bool]) -> f64 {
         let mut e = self.offset;
-        for i in 0..self.n {
-            if !x[i] {
+        for (i, set) in x.iter().enumerate().take(self.n) {
+            if !set {
                 continue;
             }
             e += self.q[i * self.n + i];
-            for j in (i + 1)..self.n {
-                if x[j] {
+            for (j, other) in x.iter().enumerate().take(self.n).skip(i + 1) {
+                if *other {
                     // Both halves of the symmetric pair.
                     e += self.q[i * self.n + j] + self.q[j * self.n + i];
                 }
@@ -150,8 +154,8 @@ impl Qubo {
     /// what makes local search over this affordable.
     pub fn delta(&self, x: &[bool], i: usize) -> f64 {
         let mut d = self.q[i * self.n + i];
-        for j in 0..self.n {
-            if j != i && x[j] {
+        for (j, set) in x.iter().enumerate().take(self.n) {
+            if j != i && *set {
                 d += self.q[i * self.n + j] + self.q[j * self.n + i];
             }
         }
@@ -177,15 +181,27 @@ pub struct Constraints {
 
 impl Constraints {
     pub fn exactly(k: usize) -> Self {
-        Constraints { exact_count: Some(k), max_count: None, min_count: None }
+        Constraints {
+            exact_count: Some(k),
+            max_count: None,
+            min_count: None,
+        }
     }
 
     pub fn at_most(k: usize) -> Self {
-        Constraints { exact_count: None, max_count: Some(k), min_count: None }
+        Constraints {
+            exact_count: None,
+            max_count: Some(k),
+            min_count: None,
+        }
     }
 
     pub fn none() -> Self {
-        Constraints { exact_count: None, max_count: None, min_count: None }
+        Constraints {
+            exact_count: None,
+            max_count: None,
+            min_count: None,
+        }
     }
 
     pub fn satisfied_by(&self, x: &[bool]) -> bool {
@@ -244,7 +260,10 @@ pub struct CorpusItem {
 pub enum Problem {
     /// Choose `select` entries from `items` maximising covered edges minus
     /// redundancy.
-    CorpusSubset { items: Vec<CorpusItem>, select: usize },
+    CorpusSubset {
+        items: Vec<CorpusItem>,
+        select: usize,
+    },
     /// Split `total_units` of budget across strategies with measured value
     /// and cost. Encoded as one binary variable per (strategy, unit) slot.
     BudgetAllocation {
@@ -321,8 +340,7 @@ impl Problem {
                 let penalty = max_v * 2.0 + 1.0;
                 let k = *total_units;
 
-                for s in 0..m {
-                    let v = value_per_unit[s];
+                for (s, &v) in value_per_unit.iter().enumerate() {
                     let c = cost_per_unit.get(s).copied().unwrap_or(1.0).max(1e-6);
                     for u in 0..cap {
                         let idx = s * cap + u;
@@ -370,15 +388,23 @@ impl Problem {
                 union.dedup();
                 union.len() as f64
             }
-            Problem::BudgetAllocation { value_per_unit, cost_per_unit, max_units_per_strategy, total_units } => {
+            Problem::BudgetAllocation {
+                value_per_unit,
+                cost_per_unit,
+                max_units_per_strategy,
+                total_units,
+            } => {
                 let m = value_per_unit.len();
                 let cap = (*max_units_per_strategy).max(1).min(*total_units);
+                let _ = m;
                 let mut total = 0.0;
-                for s in 0..m {
-                    let units = (0..cap).filter(|u| x.get(s * cap + u).copied().unwrap_or(false)).count();
+                for (s, &v) in value_per_unit.iter().enumerate() {
+                    let units = (0..cap)
+                        .filter(|u| x.get(s * cap + u).copied().unwrap_or(false))
+                        .count();
                     let c = cost_per_unit.get(s).copied().unwrap_or(1.0).max(1e-6);
                     // Concave in units: matches the diminishing-returns model.
-                    total += value_per_unit[s] * (units as f64).sqrt() / c;
+                    total += v * (units as f64).sqrt() / c;
                 }
                 total
             }
@@ -476,8 +502,12 @@ pub trait Solver {
 /// selection to a campaign would mean a corpus trim that kept the wrong number
 /// of entries. Repair is greedy on the true objective, so it does not undo the
 /// solver's work.
-fn repair(x: &mut Vec<bool>, constraints: &Constraints, problem: &Problem) {
-    let target = match (constraints.exact_count, constraints.max_count, constraints.min_count) {
+fn repair(x: &mut [bool], constraints: &Constraints, problem: &Problem) {
+    let target = match (
+        constraints.exact_count,
+        constraints.max_count,
+        constraints.min_count,
+    ) {
         (Some(k), _, _) => k,
         (None, Some(max), _) => {
             let n = x.iter().filter(|b| **b).count();
@@ -602,7 +632,11 @@ impl Solver for Greedy {
         let started = Instant::now();
         let n = prepared.qubo.len();
         let mut x = vec![false; n];
-        let target = prepared.constraints.exact_count.or(prepared.constraints.max_count).unwrap_or(n);
+        let target = prepared
+            .constraints
+            .exact_count
+            .or(prepared.constraints.max_count)
+            .unwrap_or(n);
         let mut evaluations = 0u64;
 
         for _ in 0..target {
@@ -628,7 +662,15 @@ impl Solver for Greedy {
                 None => break,
             }
         }
-        finish(self.name(), x, prepared, problem, started, evaluations, serde_json::json!({}))
+        finish(
+            self.name(),
+            x,
+            prepared,
+            problem,
+            started,
+            evaluations,
+            serde_json::json!({}),
+        )
     }
 }
 
@@ -722,7 +764,12 @@ impl Default for SimulatedAnnealing {
     /// because escaping the cardinality-penalty basin matters more here than
     /// refining within one.
     fn default() -> Self {
-        SimulatedAnnealing { initial_temp: 50.0, final_temp: 0.01, sweeps: 800, restarts: 16 }
+        SimulatedAnnealing {
+            initial_temp: 50.0,
+            final_temp: 0.01,
+            sweeps: 800,
+            restarts: 16,
+        }
     }
 }
 
@@ -857,7 +904,9 @@ struct Register {
 impl Register {
     fn new(n: usize) -> Self {
         // Start in uniform superposition: every bit equally likely.
-        Register { angles: vec![std::f64::consts::FRAC_PI_4; n] }
+        Register {
+            angles: vec![std::f64::consts::FRAC_PI_4; n],
+        }
     }
 
     fn randomise(&mut self, rng: &mut Rng) {
@@ -888,8 +937,8 @@ impl Register {
                 continue;
             }
             let dir = if want { 1.0 } else { -1.0 };
-            self.angles[i] = (self.angles[i] + dir * theta)
-                .clamp(0.01, std::f64::consts::FRAC_PI_2 - 0.01);
+            self.angles[i] =
+                (self.angles[i] + dir * theta).clamp(0.01, std::f64::consts::FRAC_PI_2 - 0.01);
         }
     }
 
@@ -925,8 +974,9 @@ impl Solver for Qiea {
         let n = qubo.len();
         let mut evaluations = 0u64;
 
-        let mut registers: Vec<Register> =
-            (0..self.population.max(1)).map(|_| Register::new(n)).collect();
+        let mut registers: Vec<Register> = (0..self.population.max(1))
+            .map(|_| Register::new(n))
+            .collect();
         let mut best = vec![false; n];
         let mut best_energy = f64::INFINITY;
         let mut generations_done = 0u32;
@@ -964,8 +1014,8 @@ impl Solver for Qiea {
             }
         }
 
-        let mean_convergence = registers.iter().map(|r| r.convergence()).sum::<f64>()
-            / registers.len().max(1) as f64;
+        let mean_convergence =
+            registers.iter().map(|r| r.convergence()).sum::<f64>() / registers.len().max(1) as f64;
 
         finish(
             self.name(),
@@ -1085,8 +1135,7 @@ impl Solver for SimulatedQuantumAnnealing {
 
             // Anneal the transverse field geometrically.
             let frac = sweep as f64 / self.sweeps.max(1) as f64;
-            let gamma = self.gamma_initial
-                * (self.gamma_final / self.gamma_initial).powf(frac);
+            let gamma = self.gamma_initial * (self.gamma_final / self.gamma_initial).powf(frac);
             final_gamma = gamma;
 
             // Coupling between adjacent slices. As gamma falls, tanh(.) falls,
@@ -1224,7 +1273,12 @@ pub fn compare_solvers(problem: &Problem, budget: SolveBudget, seed: u64) -> Com
     let mut exhaustive = Exhaustive::default();
     let optimal = if exhaustive.applicable(n) {
         let mut rng = Rng::derive(seed, "exhaustive", 0);
-        let o = exhaustive.solve(&prepared, problem, SolveBudget::from_millis(5_000), &mut rng);
+        let o = exhaustive.solve(
+            &prepared,
+            problem,
+            SolveBudget::from_millis(5_000),
+            &mut rng,
+        );
         let v = o.true_objective;
         outcomes.push(o);
         Some(v)
@@ -1232,7 +1286,11 @@ pub fn compare_solvers(problem: &Problem, budget: SolveBudget, seed: u64) -> Com
         None
     };
 
-    Comparison { problem: prepared.description, outcomes, optimal }
+    Comparison {
+        problem: prepared.description,
+        outcomes,
+        optimal,
+    }
 }
 
 #[cfg(test)]
@@ -1244,11 +1302,26 @@ mod tests {
     fn disjoint_problem(select: usize) -> Problem {
         Problem::CorpusSubset {
             items: vec![
-                CorpusItem { edges: (0..10).collect(), cost_micros: 100 },
-                CorpusItem { edges: (10..20).collect(), cost_micros: 100 },
-                CorpusItem { edges: (20..30).collect(), cost_micros: 100 },
-                CorpusItem { edges: (0..10).collect(), cost_micros: 100 },
-                CorpusItem { edges: (0..5).collect(), cost_micros: 100 },
+                CorpusItem {
+                    edges: (0..10).collect(),
+                    cost_micros: 100,
+                },
+                CorpusItem {
+                    edges: (10..20).collect(),
+                    cost_micros: 100,
+                },
+                CorpusItem {
+                    edges: (20..30).collect(),
+                    cost_micros: 100,
+                },
+                CorpusItem {
+                    edges: (0..10).collect(),
+                    cost_micros: 100,
+                },
+                CorpusItem {
+                    edges: (0..5).collect(),
+                    cost_micros: 100,
+                },
             ],
             select,
         }
@@ -1262,7 +1335,10 @@ mod tests {
                 let mut edges: Vec<u32> = (0..count).map(|_| rng.below(200) as u32).collect();
                 edges.sort_unstable();
                 edges.dedup();
-                CorpusItem { edges, cost_micros: rng.between(100, 5000) as u64 }
+                CorpusItem {
+                    edges,
+                    cost_micros: rng.between(100, 5000) as u64,
+                }
             })
             .collect();
         Problem::CorpusSubset { items, select }
@@ -1303,7 +1379,10 @@ mod tests {
         let mut rng = Rng::from_seed(2);
         let o = exhaustive.solve(&prepared, &p, SolveBudget::from_millis(5_000), &mut rng);
         assert!(o.feasible);
-        assert_eq!(o.true_objective, 30.0, "optimal union should be all 30 edges");
+        assert_eq!(
+            o.true_objective, 30.0,
+            "optimal union should be all 30 edges"
+        );
         assert_eq!(o.assignment[0..3], [true, true, true]);
     }
 
@@ -1326,7 +1405,10 @@ mod tests {
         let c = Constraints::exactly(2);
         assert!(c.satisfied_by(&[true, true, false]));
         assert!(!c.satisfied_by(&[true, false, false]));
-        assert!(c.violation(&[true, false, false]).unwrap().contains("exactly 2"));
+        assert!(c
+            .violation(&[true, false, false])
+            .unwrap()
+            .contains("exactly 2"));
         assert!(c.violation(&[true, true, false]).is_none());
 
         let m = Constraints::at_most(1);
@@ -1340,7 +1422,11 @@ mod tests {
         // A penalty term encourages feasibility but does not guarantee it, so
         // every solver's output is repaired and checked. An infeasible corpus
         // selection would mean trimming to the wrong size.
-        let problems = [disjoint_problem(3), random_problem(30, 8, 11), random_problem(60, 15, 12)];
+        let problems = [
+            disjoint_problem(3),
+            random_problem(30, 8, 11),
+            random_problem(60, 15, 12),
+        ];
         let budget = SolveBudget::from_millis(50);
         for p in &problems {
             let prepared = p.prepare();
@@ -1369,9 +1455,19 @@ mod tests {
         let prepared = p.prepare();
         let budget = SolveBudget::from_millis(30);
         let mut solvers: Vec<Box<dyn Solver>> = vec![
-            Box::new(SimulatedAnnealing { sweeps: 1_000_000, restarts: 100, ..Default::default() }),
-            Box::new(Qiea { generations: 1_000_000, ..Default::default() }),
-            Box::new(SimulatedQuantumAnnealing { sweeps: 1_000_000, ..Default::default() }),
+            Box::new(SimulatedAnnealing {
+                sweeps: 1_000_000,
+                restarts: 100,
+                ..Default::default()
+            }),
+            Box::new(Qiea {
+                generations: 1_000_000,
+                ..Default::default()
+            }),
+            Box::new(SimulatedQuantumAnnealing {
+                sweeps: 1_000_000,
+                ..Default::default()
+            }),
         ];
         for s in solvers.iter_mut() {
             let mut rng = Rng::from_seed(4);
@@ -1392,14 +1488,23 @@ mod tests {
         let p = disjoint_problem(3);
         let cmp = compare_solvers(&p, SolveBudget::from_millis(40), 5);
         let q = cmp.quality("greedy").expect("optimum known for this size");
-        assert!(q >= 1.0 - 1.0 / std::f64::consts::E, "greedy reached only {q:.3} of optimal");
+        assert!(
+            q >= 1.0 - 1.0 / std::f64::consts::E,
+            "greedy reached only {q:.3} of optimal"
+        );
     }
 
     #[test]
     fn comparison_includes_a_baseline_and_ground_truth_when_small() {
         let cmp = compare_solvers(&disjoint_problem(2), SolveBudget::from_millis(40), 6);
-        assert!(cmp.baseline().is_some(), "every comparison must carry the classical baseline");
-        assert!(cmp.optimal.is_some(), "a 5-variable instance should have ground truth");
+        assert!(
+            cmp.baseline().is_some(),
+            "every comparison must carry the classical baseline"
+        );
+        assert!(
+            cmp.optimal.is_some(),
+            "a 5-variable instance should have ground truth"
+        );
         assert!(cmp.best().is_some());
         // Every solver must be present and feasible.
         for name in [
@@ -1420,7 +1525,10 @@ mod tests {
     #[test]
     fn exhaustive_is_skipped_on_large_instances() {
         let cmp = compare_solvers(&random_problem(80, 20, 14), SolveBudget::from_millis(30), 7);
-        assert!(cmp.optimal.is_none(), "exhaustive search must not be attempted at n=80");
+        assert!(
+            cmp.optimal.is_none(),
+            "exhaustive search must not be attempted at n=80"
+        );
         assert!(!cmp.outcomes.iter().any(|o| o.solver == "exhaustive"));
     }
 
@@ -1448,11 +1556,15 @@ mod tests {
     fn solvers_are_reproducible_for_a_fixed_seed() {
         let p = random_problem(40, 10, 15);
         let run = || {
-            compare_solvers(&p, SolveBudget::from_millis(40).with_evaluations(20_000), 42)
-                .outcomes
-                .into_iter()
-                .map(|o| (o.solver, o.assignment))
-                .collect::<Vec<_>>()
+            compare_solvers(
+                &p,
+                SolveBudget::from_millis(40).with_evaluations(20_000),
+                42,
+            )
+            .outcomes
+            .into_iter()
+            .map(|o| (o.solver, o.assignment))
+            .collect::<Vec<_>>()
         };
         // Equal evaluation budgets rather than wall clock, so the comparison
         // is deterministic rather than dependent on machine timing.
@@ -1480,8 +1592,14 @@ mod tests {
         let units: Vec<usize> = (0..3)
             .map(|s| (0..cap).filter(|u| o.assignment[s * cap + u]).count())
             .collect();
-        assert!(units[0] >= units[2], "best strategy did not get the most: {units:?}");
-        assert!(units[0] < 6, "one strategy took the whole budget: {units:?}");
+        assert!(
+            units[0] >= units[2],
+            "best strategy did not get the most: {units:?}"
+        );
+        assert!(
+            units[0] < 6,
+            "one strategy took the whole budget: {units:?}"
+        );
     }
 
     #[test]
@@ -1492,9 +1610,18 @@ mod tests {
         // comparison.
         let p = Problem::CorpusSubset {
             items: vec![
-                CorpusItem { edges: vec![1, 2], cost_micros: 1 },
-                CorpusItem { edges: vec![1, 3], cost_micros: 1 },
-                CorpusItem { edges: vec![1, 4], cost_micros: 1 },
+                CorpusItem {
+                    edges: vec![1, 2],
+                    cost_micros: 1,
+                },
+                CorpusItem {
+                    edges: vec![1, 3],
+                    cost_micros: 1,
+                },
+                CorpusItem {
+                    edges: vec![1, 4],
+                    cost_micros: 1,
+                },
             ],
             select: 3,
         };
@@ -1508,7 +1635,11 @@ mod tests {
         let mut x = vec![true, true, true, true, true];
         repair(&mut x, &Constraints::exactly(3), &p);
         assert_eq!(x.iter().filter(|b| **b).count(), 3);
-        assert_eq!(p.true_objective(&x), 30.0, "repair discarded the disjoint entries");
+        assert_eq!(
+            p.true_objective(&x),
+            30.0,
+            "repair discarded the disjoint entries"
+        );
 
         // And from an under-selection.
         let mut y = vec![false, false, false, false, false];
@@ -1519,7 +1650,10 @@ mod tests {
 
     #[test]
     fn empty_and_degenerate_problems_do_not_panic() {
-        let empty = Problem::CorpusSubset { items: Vec::new(), select: 0 };
+        let empty = Problem::CorpusSubset {
+            items: Vec::new(),
+            select: 0,
+        };
         let cmp = compare_solvers(&empty, SolveBudget::from_millis(10), 9);
         for o in &cmp.outcomes {
             assert!(o.feasible);
@@ -1528,11 +1662,18 @@ mod tests {
 
         // Selecting more than exists.
         let over = Problem::CorpusSubset {
-            items: vec![CorpusItem { edges: vec![1], cost_micros: 1 }],
+            items: vec![CorpusItem {
+                edges: vec![1],
+                cost_micros: 1,
+            }],
             select: 10,
         };
         let prepared = over.prepare();
-        assert_eq!(prepared.constraints.exact_count, Some(1), "k must clamp to n");
+        assert_eq!(
+            prepared.constraints.exact_count,
+            Some(1),
+            "k must clamp to n"
+        );
     }
 
     #[test]
@@ -1546,11 +1687,19 @@ mod tests {
             // answer was worth its cost.
             assert!(o.objective_per_ms().is_finite());
         }
-        let qiea = cmp.outcomes.iter().find(|o| o.solver == "quantum-inspired-evolutionary").unwrap();
+        let qiea = cmp
+            .outcomes
+            .iter()
+            .find(|o| o.solver == "quantum-inspired-evolutionary")
+            .unwrap();
         assert!(qiea.diagnostics["generations_done"].as_u64().unwrap() > 0);
         assert!(qiea.diagnostics["mean_convergence"].as_f64().is_some());
 
-        let sqa = cmp.outcomes.iter().find(|o| o.solver == "simulated-quantum-annealing").unwrap();
+        let sqa = cmp
+            .outcomes
+            .iter()
+            .find(|o| o.solver == "simulated-quantum-annealing")
+            .unwrap();
         assert!(sqa.diagnostics["trotter"].as_u64().unwrap() > 0);
         assert!(sqa.diagnostics["sweeps_done"].as_u64().unwrap() > 0);
     }
@@ -1560,7 +1709,7 @@ mod tests {
         let mut rng = Rng::from_seed(11);
         let mut r = Register::new(4);
         // Uniform superposition: each bit should come up about half the time.
-        let mut ones = vec![0u32; 4];
+        let mut ones = [0u32; 4];
         for _ in 0..4000 {
             for (i, b) in r.observe(&mut rng).iter().enumerate() {
                 if *b {
@@ -1570,9 +1719,15 @@ mod tests {
         }
         for (i, c) in ones.iter().enumerate() {
             let p = *c as f64 / 4000.0;
-            assert!((0.4..0.6).contains(&p), "bit {i} observed 1 with probability {p}");
+            assert!(
+                (0.4..0.6).contains(&p),
+                "bit {i} observed 1 with probability {p}"
+            );
         }
-        assert!(r.convergence() < 0.1, "uniform superposition should be unconverged");
+        assert!(
+            r.convergence() < 0.1,
+            "uniform superposition should be unconverged"
+        );
 
         // Rotate hard toward all-ones; the distribution must follow.
         let target = vec![true; 4];
@@ -1583,7 +1738,13 @@ mod tests {
         let after: u32 = (0..2000)
             .map(|_| r.observe(&mut rng).iter().filter(|b| **b).count() as u32)
             .sum();
-        assert!(after as f64 / 2000.0 > 3.5, "rotation did not converge toward the target");
-        assert!(r.convergence() > 0.8, "register should be converged after rotation");
+        assert!(
+            after as f64 / 2000.0 > 3.5,
+            "rotation did not converge toward the target"
+        );
+        assert!(
+            r.convergence() > 0.8,
+            "register should be converged after rotation"
+        );
     }
 }

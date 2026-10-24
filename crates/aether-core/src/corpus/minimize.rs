@@ -151,10 +151,13 @@ mod tests {
     fn reduces_to_the_essential_bytes() {
         // Only the presence of "BOOM" matters; everything else is padding.
         let input = b"xxxxxxxxxxBOOMyyyyyyyyyy".to_vec();
-        let r = minimize(&input, 10_000, |c| {
-            c.windows(4).any(|w| w == b"BOOM")
-        });
-        assert_eq!(r.input, b"BOOM", "got {:?}", String::from_utf8_lossy(&r.input));
+        let r = minimize(&input, 10_000, |c| c.windows(4).any(|w| w == b"BOOM"));
+        assert_eq!(
+            r.input,
+            b"BOOM",
+            "got {:?}",
+            String::from_utf8_lossy(&r.input)
+        );
         assert_eq!(r.stop, MinimizeStop::Converged);
         assert!(r.reduction_ratio() > 0.8);
     }
@@ -223,7 +226,10 @@ mod tests {
         let predicate = |c: &[u8]| c.windows(2).any(|w| w == b"\xDE\xAD") && c.len() >= 4;
         let input = b"\x00\x01\xDE\xAD\x02\x03\x04\x05".to_vec();
         let r = minimize(&input, 10_000, predicate);
-        assert!(predicate(&r.input), "minimised input no longer satisfies the predicate");
+        assert!(
+            predicate(&r.input),
+            "minimised input no longer satisfies the predicate"
+        );
     }
 
     #[test]
@@ -246,15 +252,21 @@ mod tests {
             n += 1;
             n % 2 == 0 && c.starts_with(b"KEEP")
         });
-        assert!(r.input.starts_with(b"KEEP"), "got {:?}", String::from_utf8_lossy(&r.input));
+        assert!(
+            r.input.starts_with(b"KEEP"),
+            "got {:?}",
+            String::from_utf8_lossy(&r.input)
+        );
     }
 
     #[test]
     fn minimisation_is_deterministic() {
         let input = b"prefix-TARGET-suffix".to_vec();
-        let run = || {
-            minimize(&input, 10_000, |c| c.windows(6).any(|w| w == b"TARGET")).input
-        };
-        assert_eq!(run(), run(), "same input and predicate must give the same result");
+        let run = || minimize(&input, 10_000, |c| c.windows(6).any(|w| w == b"TARGET")).input;
+        assert_eq!(
+            run(),
+            run(),
+            "same input and predicate must give the same result"
+        );
     }
 }

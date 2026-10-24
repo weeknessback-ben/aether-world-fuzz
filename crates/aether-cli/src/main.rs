@@ -278,7 +278,10 @@ enum BenchmarkCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let ctx = commands::Ctx { json: cli.json, quiet: cli.quiet };
+    let ctx = commands::Ctx {
+        json: cli.json,
+        quiet: cli.quiet,
+    };
 
     let code = match run(cli.command, &ctx) {
         Ok(code) => code,
@@ -290,7 +293,10 @@ fn main() -> ExitCode {
                     "ok": false,
                     "error": { "kind": e.kind(), "message": e.to_string() },
                 });
-                eprintln!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&body).unwrap_or_default()
+                );
             } else {
                 eprintln!("aether: {e}");
             }
@@ -307,13 +313,9 @@ fn run(command: Command, ctx: &commands::Ctx) -> aether_core::Result<u8> {
     match command {
         Command::Doctor => commands::doctor(ctx),
 
-        Command::Target(TargetCommand::Inspect(a)) => commands::target_inspect(
-            ctx,
-            &a.binary,
-            &a.input_mode,
-            &a.args,
-            a.timeout_ms,
-        ),
+        Command::Target(TargetCommand::Inspect(a)) => {
+            commands::target_inspect(ctx, &a.binary, &a.input_mode, &a.args, a.timeout_ms)
+        }
 
         Command::Campaign(CampaignCommand::Create { config }) => {
             commands::campaign_create(ctx, &config)
@@ -360,26 +362,45 @@ fn run(command: Command, ctx: &commands::Ctx) -> aether_core::Result<u8> {
         Command::Corpus(CorpusCommand::Stats { campaign_id, dir }) => {
             commands::corpus_stats(ctx, &dir, campaign_id.as_deref())
         }
-        Command::Corpus(CorpusCommand::Export { campaign_id, output, dir }) => {
-            commands::corpus_export(ctx, &dir, &campaign_id, &output)
-        }
+        Command::Corpus(CorpusCommand::Export {
+            campaign_id,
+            output,
+            dir,
+        }) => commands::corpus_export(ctx, &dir, &campaign_id, &output),
 
-        Command::Findings(FindingsCommand::List { campaign_id, dir, status, limit }) => {
-            commands::findings_list(ctx, &dir, campaign_id.as_deref(), status.as_deref(), limit)
-        }
+        Command::Findings(FindingsCommand::List {
+            campaign_id,
+            dir,
+            status,
+            limit,
+        }) => commands::findings_list(ctx, &dir, campaign_id.as_deref(), status.as_deref(), limit),
         Command::Findings(FindingsCommand::Show { finding_id, dir }) => {
             commands::findings_show(ctx, &dir, &finding_id)
         }
-        Command::Findings(FindingsCommand::Validate { finding_id, config, dir, attempts }) => {
-            commands::findings_validate(ctx, &dir, &finding_id, &config, attempts)
-        }
-        Command::Findings(FindingsCommand::Minimize { finding_id, config, dir }) => {
-            commands::findings_minimize(ctx, &dir, &finding_id, &config)
-        }
+        Command::Findings(FindingsCommand::Validate {
+            finding_id,
+            config,
+            dir,
+            attempts,
+        }) => commands::findings_validate(ctx, &dir, &finding_id, &config, attempts),
+        Command::Findings(FindingsCommand::Minimize {
+            finding_id,
+            config,
+            dir,
+        }) => commands::findings_minimize(ctx, &dir, &finding_id, &config),
 
-        Command::Report(ReportCommand::Generate { campaign_id, dir, format, output }) => {
-            commands::report_generate(ctx, &dir, campaign_id.as_deref(), &format, output.as_deref())
-        }
+        Command::Report(ReportCommand::Generate {
+            campaign_id,
+            dir,
+            format,
+            output,
+        }) => commands::report_generate(
+            ctx,
+            &dir,
+            campaign_id.as_deref(),
+            &format,
+            output.as_deref(),
+        ),
 
         Command::Benchmark(BenchmarkCommand::Run {
             experiment,
@@ -397,9 +418,10 @@ fn run(command: Command, ctx: &commands::Ctx) -> aether_core::Result<u8> {
         ),
         Command::Benchmark(BenchmarkCommand::List) => commands::benchmark_list(ctx),
 
-        Command::Init { profile, binary, output } => {
-            commands::init(ctx, &profile, binary.as_deref(), output.as_deref())
-        }
+        Command::Init {
+            profile,
+            binary,
+            output,
+        } => commands::init(ctx, &profile, binary.as_deref(), output.as_deref()),
     }
 }
-

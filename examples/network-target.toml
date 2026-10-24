@@ -1,0 +1,65 @@
+# What authorizing a network target actually requires.
+#
+# IMPORTANT: no network execution backend is implemented. This file documents
+# the scope policy - which is enforced - so that the requirements are clear
+# before one exists. A campaign against this configuration will refuse at the
+# target, not at the scope check.
+#
+# Three things are required together before the engine will accept a network
+# target. Any one missing and it refuses:
+#
+#   1. authorized_hosts naming the host explicitly. No wildcards, and no
+#      subdomain inheritance: example.com does not authorize
+#      admin.example.com.
+#   2. authorization_note recording who authorized the testing.
+#   3. max_requests_per_second, so the rate is a deliberate choice.
+#
+# Loopback is not special-cased. 127.0.0.1:8080 may be someone's production
+# admin panel forwarded over SSH, and the engine cannot tell.
+#
+# Supplying an address is not authorization to test it.
+schema_version = 1
+
+[target]
+name = "local-lab-service"
+kind = "executable"
+binary = "build/http_harness"
+input_mode = "stdin"
+timeout_ms = 5000
+memory_limit_mb = 512
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 300
+workers = 1
+seed = 20260124
+max_input_bytes = 8192
+
+[scope]
+allow_local_execution = true
+allow_network_targets = true
+# Host and port both pinned. An entry without a port authorizes any port on
+# that host, which is usually broader than intended.
+authorized_hosts = ["127.0.0.1:18080"]
+authorization_note = "Local laboratory service started by this test harness; engagement ticket SEC-1234, authorized by the service owner on 2026-10-24."
+max_requests_per_second = 25
+
+[strategies]
+enabled = ["dictionary", "havoc", "structure-aware"]
+dictionary = ["GET ", "POST ", "HTTP/1.1", "Content-Length: ", "\r\n\r\n", "Host: "]
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "state-transition", "sanitizer"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 32
+
+[reproduction]
+attempts = 5
+required_successes = 3
+minimize = true
+
+[output]
+dir = ".aether"
+report_formats = ["json", "markdown"]

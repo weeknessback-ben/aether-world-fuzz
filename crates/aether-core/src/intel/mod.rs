@@ -140,17 +140,18 @@ mod tests {
     use crate::feedback::coverage::CoverageGain;
 
     fn intel() -> Intelligence {
-        Intelligence::new(
-            &IntelConfig::default(),
-            vec!["a".into(), "b".into()],
-        )
+        Intelligence::new(&IntelConfig::default(), vec!["a".into(), "b".into()])
     }
 
     #[test]
     fn records_executions_into_the_round_accumulator() {
         let mut i = intel();
         let fb = Feedback {
-            coverage: Some(CoverageGain { new_edges: 3, new_buckets: 1, touched: 10 }),
+            coverage: Some(CoverageGain {
+                new_edges: 3,
+                new_buckets: 1,
+                touched: 10,
+            }),
             cost_micros: 1000,
             novelty: 0.5,
             new_cmp_tokens: 2,
@@ -170,7 +171,11 @@ mod tests {
         // Coverage is a proxy; a reproducible finding is the actual objective.
         let mut a = intel();
         let cov_only = Feedback {
-            coverage: Some(CoverageGain { new_edges: 5, new_buckets: 0, touched: 5 }),
+            coverage: Some(CoverageGain {
+                new_edges: 5,
+                new_buckets: 0,
+                touched: 5,
+            }),
             cost_micros: 1000,
             ..Default::default()
         };
@@ -178,7 +183,13 @@ mod tests {
         let (cov_outcome, _) = a.finish_round(a.context(0, None), 0);
 
         let mut b = intel();
-        b.record_execution(&Feedback { cost_micros: 1000, ..Default::default() }, true);
+        b.record_execution(
+            &Feedback {
+                cost_micros: 1000,
+                ..Default::default()
+            },
+            true,
+        );
         let (find_outcome, _) = b.finish_round(b.context(0, None), 0);
 
         assert!(
@@ -193,7 +204,11 @@ mod tests {
     fn the_accumulator_resets_between_rounds() {
         let mut i = intel();
         let fb = Feedback {
-            coverage: Some(CoverageGain { new_edges: 4, new_buckets: 0, touched: 4 }),
+            coverage: Some(CoverageGain {
+                new_edges: 4,
+                new_buckets: 0,
+                touched: 4,
+            }),
             cost_micros: 500,
             ..Default::default()
         };
@@ -201,7 +216,10 @@ mod tests {
         let ctx = i.context(0, None);
         i.finish_round(ctx, 0);
         let (second, _) = i.finish_round(ctx, 0);
-        assert_eq!(second.executions, 0, "round accumulator leaked into the next round");
+        assert_eq!(
+            second.executions, 0,
+            "round accumulator leaked into the next round"
+        );
         assert_eq!(second.value, 0.0);
         assert!(!second.produced_anything());
     }
@@ -228,7 +246,11 @@ mod tests {
             let arm = i.scheduler.select(ctx, &mut rng);
             i.record_execution(
                 &Feedback {
-                    coverage: Some(CoverageGain { new_edges: 1, new_buckets: 0, touched: 1 }),
+                    coverage: Some(CoverageGain {
+                        new_edges: 1,
+                        new_buckets: 0,
+                        touched: 1,
+                    }),
                     cost_micros: 800,
                     ..Default::default()
                 },
@@ -243,7 +265,10 @@ mod tests {
         assert!(s.recent_decisions.len() <= 10, "snapshot must stay bounded");
         // Shares must sum to roughly one.
         let total: f64 = s.allocation.iter().map(|(_, v)| v).sum();
-        assert!((total - 1.0).abs() < 1e-6, "allocation shares summed to {total}");
+        assert!(
+            (total - 1.0).abs() < 1e-6,
+            "allocation shares summed to {total}"
+        );
     }
 
     #[test]
@@ -255,6 +280,10 @@ mod tests {
             let (_, a) = i.finish_round(ctx, 0);
             advice = a;
         }
-        assert_ne!(advice, stagnation::Response::Continue, "no advice after 200 barren rounds");
+        assert_ne!(
+            advice,
+            stagnation::Response::Continue,
+            "no advice after 200 barren rounds"
+        );
     }
 }

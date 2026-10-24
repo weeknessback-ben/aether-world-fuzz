@@ -1,0 +1,30 @@
+{
+  "name": "aether-fuzzing",
+  "displayName": "AETHER Fuzzing",
+  "version": "0.1.0",
+  "description": "Adaptive hybrid fuzzing: design a campaign, run it, and validate what it finds into reproducible evidence.",
+  "author": {
+    "name": "AETHER contributors"
+  },
+  "repository": "https://github.com/weeknessback-ben/self-aware_fuzz",
+  "license": "Apache-2.0",
+  "keywords": ["fuzzing", "security", "testing", "coverage", "sanitizer"],
+  "agents": [
+    "./agents/aether-planner.md",
+    "./agents/aether-campaign-analyst.md",
+    "./agents/aether-finding-validator.md"
+  ],
+  "userConfig": {
+    "aether_binary": {
+      "type": "file",
+      "title": "aether binary",
+      "description": "Path to the compiled aether binary. Leave empty to search the repository's target/release and target/debug directories, then PATH."
+    },
+    "output_dir": {
+      "type": "string",
+      "title": "Campaign output directory",
+      "description": "Where campaign state, corpus and reports are written, relative to the project root.",
+      "default": ".aether"
+    }
+  }
+}

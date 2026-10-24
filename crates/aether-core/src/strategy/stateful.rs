@@ -62,12 +62,36 @@ fn random_token(rng: &mut Rng) -> Vec<u8> {
 /// use supplies its own through `strategies.params`.
 fn default_commands() -> Vec<CommandTemplate> {
     vec![
-        CommandTemplate { name: "AUTH".into(), template: "AUTH {arg}".into(), takes_arg: true },
-        CommandTemplate { name: "OPEN".into(), template: "OPEN {arg}".into(), takes_arg: true },
-        CommandTemplate { name: "WRITE".into(), template: "WRITE {arg}".into(), takes_arg: true },
-        CommandTemplate { name: "CLOSE".into(), template: "CLOSE".into(), takes_arg: false },
-        CommandTemplate { name: "COMMIT".into(), template: "COMMIT".into(), takes_arg: false },
-        CommandTemplate { name: "QUIT".into(), template: "QUIT".into(), takes_arg: false },
+        CommandTemplate {
+            name: "AUTH".into(),
+            template: "AUTH {arg}".into(),
+            takes_arg: true,
+        },
+        CommandTemplate {
+            name: "OPEN".into(),
+            template: "OPEN {arg}".into(),
+            takes_arg: true,
+        },
+        CommandTemplate {
+            name: "WRITE".into(),
+            template: "WRITE {arg}".into(),
+            takes_arg: true,
+        },
+        CommandTemplate {
+            name: "CLOSE".into(),
+            template: "CLOSE".into(),
+            takes_arg: false,
+        },
+        CommandTemplate {
+            name: "COMMIT".into(),
+            template: "COMMIT".into(),
+            takes_arg: false,
+        },
+        CommandTemplate {
+            name: "QUIT".into(),
+            template: "QUIT".into(),
+            takes_arg: false,
+        },
     ]
 }
 
@@ -127,7 +151,9 @@ impl StatefulSequence {
         if n == 0 {
             return 0;
         }
-        let Some(prev) = prev else { return rng.below(n) };
+        let Some(prev) = prev else {
+            return rng.below(n);
+        };
         let weights: Vec<f64> = (0..n)
             .map(|to| {
                 let seen = self.accepted_pairs.get(&(prev, to)).copied().unwrap_or(0) as f64;
@@ -152,7 +178,10 @@ impl StatefulSequence {
             if accepted {
                 depth = i + 1;
                 if i > 0 && i < steps.len() {
-                    *self.accepted_pairs.entry((steps[i - 1], steps[i])).or_insert(0) += 1;
+                    *self
+                        .accepted_pairs
+                        .entry((steps[i - 1], steps[i]))
+                        .or_insert(0) += 1;
                 }
             }
         }
@@ -164,7 +193,11 @@ impl StatefulSequence {
         String::from_utf8_lossy(output)
             .lines()
             .filter_map(|l| {
-                let d: String = l.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+                let d: String = l
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
                 if d.len() == 3 {
                     d.parse().ok()
                 } else {
@@ -208,8 +241,12 @@ impl Strategy for StatefulSequence {
             let mut cmds = Vec::new();
             for item in items {
                 if let Some(s) = item.as_str() {
-                    let name =
-                        s.split_whitespace().next().unwrap_or(s).trim_end_matches(':').to_string();
+                    let name = s
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or(s)
+                        .trim_end_matches(':')
+                        .to_string();
                     cmds.push(CommandTemplate {
                         name,
                         template: s.to_string(),
@@ -240,7 +277,7 @@ impl Strategy for StatefulSequence {
                     }
                     let step = self.next_step(None, rng);
                     let line = self.commands[step].render(rng, &self.args);
-                    if buf.len() + line.len() + 1 <= self.max_len {
+                    if buf.len() + line.len() < self.max_len {
                         buf.extend_from_slice(&line);
                         buf.push(b'\n');
                         out.push(Candidate::from_base(buf, base, "extend-sequence"));
@@ -265,18 +302,27 @@ impl Strategy for StatefulSequence {
             // transitions the response codes correspond to.
             let note = format!(
                 "sequence:{}",
-                steps.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(",")
+                steps
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
-            out.push(Candidate { bytes, parent: None, note });
+            out.push(Candidate {
+                bytes,
+                parent: None,
+                note,
+            });
         }
         out
     }
 
     fn observe(&mut self, results: &[CandidateResult]) {
         for r in results {
-            let Some(spec) = r.note.strip_prefix("sequence:") else { continue };
-            let steps: Vec<usize> =
-                spec.split(',').filter_map(|s| s.parse().ok()).collect();
+            let Some(spec) = r.note.strip_prefix("sequence:") else {
+                continue;
+            };
+            let steps: Vec<usize> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
             if steps.is_empty() {
                 continue;
             }
@@ -289,8 +335,12 @@ impl Strategy for StatefulSequence {
             }
             // No status codes available (a target that does not answer that
             // way): fall back to crediting the sequence as a whole.
-            let transitions =
-                r.feedback.components.get("state-transition").copied().unwrap_or(0.0);
+            let transitions = r
+                .feedback
+                .components
+                .get("state-transition")
+                .copied()
+                .unwrap_or(0.0);
             if transitions > 0.0 || r.retained {
                 for pair in steps.windows(2) {
                     *self.accepted_pairs.entry((pair[0], pair[1])).or_insert(0) += 1;
@@ -331,9 +381,15 @@ mod tests {
         assert!(!cands.is_empty(), "should generate without any corpus");
         for c in &cands {
             let text = String::from_utf8_lossy(&c.bytes);
-            assert!(text.ends_with('\n'), "sequence not newline terminated: {text:?}");
+            assert!(
+                text.ends_with('\n'),
+                "sequence not newline terminated: {text:?}"
+            );
             let lines: Vec<&str> = text.lines().collect();
-            assert!(lines.len() >= 2, "expected at least min_steps lines: {text:?}");
+            assert!(
+                lines.len() >= 2,
+                "expected at least min_steps lines: {text:?}"
+            );
             for l in lines {
                 let cmd = l.split_whitespace().next().unwrap_or("");
                 assert!(
@@ -397,7 +453,9 @@ mod tests {
         let mut rng = Rng::from_seed(3);
         let cands = s.propose(100, &[], &mut rng);
         assert!(
-            cands.iter().any(|c| c.bytes.windows(7).any(|w| w == b"letmein")),
+            cands
+                .iter()
+                .any(|c| c.bytes.windows(7).any(|w| w == b"letmein")),
             "the dictionary token was never used as an argument"
         );
     }
@@ -450,7 +508,9 @@ mod tests {
         let mut rng = Rng::from_seed(4);
         let mut after_zero = std::collections::HashMap::new();
         for _ in 0..2000 {
-            *after_zero.entry(s.next_step(Some(0), &mut rng)).or_insert(0) += 1;
+            *after_zero
+                .entry(s.next_step(Some(0), &mut rng))
+                .or_insert(0) += 1;
         }
         let one = *after_zero.get(&1).unwrap_or(&0);
         assert!(one > 600, "learned transition chosen only {one}/2000 times");
@@ -502,8 +562,10 @@ mod tests {
         let mut rng = Rng::from_seed(6);
         let b = bases(&[b"AUTH letmein\nOPEN f\n"]);
         let cands = s.propose(32, &b, &mut rng);
-        let extended: Vec<&Candidate> =
-            cands.iter().filter(|c| c.note == "extend-sequence").collect();
+        let extended: Vec<&Candidate> = cands
+            .iter()
+            .filter(|c| c.note == "extend-sequence")
+            .collect();
         assert!(!extended.is_empty(), "never extended the base sequence");
         for c in extended {
             assert!(
@@ -522,14 +584,20 @@ mod tests {
         let params = BTreeMap::new();
         let dict: Vec<Vec<u8>> = Vec::new();
         let mut s = built(&params, &dict);
-        let mut fb = crate::feedback::Feedback::default();
-        fb.response_codes = vec![230, 250, 550];
+        let fb = crate::feedback::Feedback {
+            response_codes: vec![230, 250, 550],
+            ..Default::default()
+        };
         s.observe(&[CandidateResult {
             note: "sequence:0,1,2".into(),
             feedback: fb,
             retained: true,
         }]);
-        assert!(s.accepted_pairs.contains_key(&(0, 1)), "{:?}", s.accepted_pairs);
+        assert!(
+            s.accepted_pairs.contains_key(&(0, 1)),
+            "{:?}",
+            s.accepted_pairs
+        );
         assert!(
             !s.accepted_pairs.contains_key(&(1, 2)),
             "credited a transition the target rejected: {:?}",
@@ -561,7 +629,10 @@ mod tests {
         let run = || {
             let mut s = built(&params, &dict);
             let mut rng = Rng::from_seed(888);
-            s.propose(20, &[], &mut rng).into_iter().map(|c| c.bytes).collect::<Vec<_>>()
+            s.propose(20, &[], &mut rng)
+                .into_iter()
+                .map(|c| c.bytes)
+                .collect::<Vec<_>>()
         };
         assert_eq!(run(), run());
     }

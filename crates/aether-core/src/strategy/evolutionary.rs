@@ -118,8 +118,11 @@ impl Evolutionary {
         if self.population.len() <= self.population_cap {
             return;
         }
-        self.population
-            .sort_by(|a, b| b.fitness.partial_cmp(&a.fitness).unwrap_or(std::cmp::Ordering::Equal));
+        self.population.sort_by(|a, b| {
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         self.population.truncate(self.population_cap);
     }
 
@@ -169,7 +172,9 @@ impl Strategy for Evolutionary {
     fn initialize(&mut self, ctx: &StrategyContext<'_>) -> Result<()> {
         self.max_len = ctx.max_input_bytes;
         self.population_cap = ctx.param_u64("evolution_population", 64).clamp(4, 4096) as usize;
-        self.crossover_rate = ctx.param_f64("evolution_crossover_rate", 0.3).clamp(0.0, 1.0);
+        self.crossover_rate = ctx
+            .param_f64("evolution_crossover_rate", 0.3)
+            .clamp(0.0, 1.0);
         self.elitism = ctx.param_f64("evolution_elitism", 0.2).clamp(0.0, 0.9);
         Ok(())
     }
@@ -193,12 +198,7 @@ impl Strategy for Evolutionary {
                     continue;
                 }
                 (
-                    Self::crossover(
-                        &parent.bytes,
-                        &self.population[qi].bytes,
-                        rng,
-                        self.max_len,
-                    ),
+                    Self::crossover(&parent.bytes, &self.population[qi].bytes, rng, self.max_len),
                     "crossover",
                 )
             } else {
@@ -214,7 +214,10 @@ impl Strategy for Evolutionary {
             self.pending.push((note.clone(), pi));
             out.push(Candidate {
                 bytes,
-                parent: bases.iter().find(|b| b.bytes == self.population[pi].bytes).map(|b| b.id.clone()),
+                parent: bases
+                    .iter()
+                    .find(|b| b.bytes == self.population[pi].bytes)
+                    .map(|b| b.id.clone()),
                 note,
             });
         }
@@ -225,8 +228,11 @@ impl Strategy for Evolutionary {
         // Protect the elite before admitting this generation's offspring, so
         // a bad round cannot wipe out accumulated progress.
         let keep = ((self.population.len() as f64) * self.elitism).ceil() as usize;
-        self.population
-            .sort_by(|a, b| b.fitness.partial_cmp(&a.fitness).unwrap_or(std::cmp::Ordering::Equal));
+        self.population.sort_by(|a, b| {
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         for r in results {
             let fit = Self::fitness(r);
@@ -311,7 +317,11 @@ mod tests {
         CandidateResult {
             note: note.to_string(),
             feedback: Feedback {
-                coverage: Some(CoverageGain { new_edges, new_buckets: 0, touched: new_edges }),
+                coverage: Some(CoverageGain {
+                    new_edges,
+                    new_buckets: 0,
+                    touched: new_edges,
+                }),
                 cost_micros: micros,
                 ..Default::default()
             },
@@ -345,7 +355,9 @@ mod tests {
         params.insert("evolution_population".into(), toml::Value::Integer(8));
         let mut s = built(&params);
         let mut rng = Rng::from_seed(3);
-        let many: Vec<Vec<u8>> = (0..100).map(|i| format!("individual-{i}").into_bytes()).collect();
+        let many: Vec<Vec<u8>> = (0..100)
+            .map(|i| format!("individual-{i}").into_bytes())
+            .collect();
         let refs: Vec<&[u8]> = many.iter().map(|v| v.as_slice()).collect();
         let b = bases(&refs);
         for _ in 0..20 {
@@ -353,7 +365,11 @@ mod tests {
             let results: Vec<CandidateResult> =
                 c.iter().map(|x| graded(&x.note, 1, 1000, true)).collect();
             s.observe(&results);
-            assert!(s.population.len() <= 8, "population grew to {}", s.population.len());
+            assert!(
+                s.population.len() <= 8,
+                "population grew to {}",
+                s.population.len()
+            );
         }
     }
 
@@ -413,8 +429,10 @@ mod tests {
         // Many fruitless rounds.
         for _ in 0..30 {
             let c = s.propose(8, &b, &mut rng);
-            let results: Vec<CandidateResult> =
-                c.iter().map(|x| graded(&x.note, 0, 20_000, false)).collect();
+            let results: Vec<CandidateResult> = c
+                .iter()
+                .map(|x| graded(&x.note, 0, 20_000, false))
+                .collect();
             s.observe(&results);
         }
         assert!(
@@ -452,7 +470,7 @@ mod tests {
         let mut s = Evolutionary::default();
         s.initialize(&c).unwrap();
         let mut rng = Rng::from_seed(8);
-        let b = bases(&[&vec![0x41u8; 30], &vec![0x42u8; 30]]);
+        let b = bases(&[&[0x41u8; 30], &[0x42u8; 30]]);
         for _ in 0..20 {
             for cand in s.propose(16, &b, &mut rng) {
                 assert!(cand.bytes.len() <= 32, "got {}", cand.bytes.len());
@@ -464,8 +482,16 @@ mod tests {
     fn is_reproducible_for_a_fixed_seed() {
         let params = BTreeMap::new();
         let b = vec![
-            Base { id: crate::ids::InputId::from_string("inp-a"), bytes: b"alpha input".to_vec(), cmp_entries: vec![] },
-            Base { id: crate::ids::InputId::from_string("inp-b"), bytes: b"beta input".to_vec(), cmp_entries: vec![] },
+            Base {
+                id: crate::ids::InputId::from_string("inp-a"),
+                bytes: b"alpha input".to_vec(),
+                cmp_entries: vec![],
+            },
+            Base {
+                id: crate::ids::InputId::from_string("inp-b"),
+                bytes: b"beta input".to_vec(),
+                cmp_entries: vec![],
+            },
         ];
         let run = || {
             let mut s = built(&params);
@@ -491,7 +517,8 @@ mod tests {
         let b = bases(&[b"x", b"y"]);
         for _ in 0..3 {
             let c = s.propose(4, &b, &mut rng);
-            let r: Vec<CandidateResult> = c.iter().map(|x| graded(&x.note, 5, 1000, true)).collect();
+            let r: Vec<CandidateResult> =
+                c.iter().map(|x| graded(&x.note, 5, 1000, true)).collect();
             s.observe(&r);
         }
         let st = s.export_state();

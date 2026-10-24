@@ -1,0 +1,28 @@
+# Grammar for the format fixtures/toy_parser.c accepts.
+#
+#   stream := "TLV1" record*
+#   record := 'T' type:u8 len:u8 payload[len]
+#
+# <records> is recursive through <record> <records>, which is what makes the
+# grammar able to produce multi-record streams. Expansion is bounded by
+# grammar_max_depth and by the input size ceiling, and at the depth limit the
+# generator prefers an alternative that does not recurse, so output stays
+# well-formed rather than truncated.
+
+<start>    ::= "TLV1" <records>
+
+<records>  ::= <record> | <record> <records>
+
+<record>   ::= "T" <integer> | "T" <string> | "T" <nested>
+
+# Type 1: an integer payload, two bytes.
+<integer>  ::= "\x01" "\x02" <byte> <byte>
+
+# Type 2: a short text payload.
+<string>   ::= "\x02" "\x04" "abcd" | "\x02" "\x02" "hi"
+
+# Type 3: a nested stream. The length byte has to match the payload, so the
+# nested forms here are fixed-size: a generator cannot compute a length.
+<nested>   ::= "\x03" "\x05" "T" "\x01" "\x02" <byte> <byte>
+
+<byte>     ::= "\x00" | "\x01" | "\x7f" | "\x80" | "\xff" | "A"

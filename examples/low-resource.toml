@@ -1,0 +1,46 @@
+# A constrained machine.
+#
+# Small inputs, one worker, a tight memory limit and minimal telemetry. The
+# campaign explores less per second but stays inside a small footprint.
+schema_version = 1
+
+[target]
+name = "coverage_ladder"
+kind = "executable"
+binary = "build/coverage_ladder"
+input_mode = "stdin"
+timeout_ms = 500
+memory_limit_mb = 128
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 120
+workers = 1
+seed = 20260124
+# Small inputs bound both memory and the cost of every mutation.
+max_input_bytes = 4096
+
+[strategies]
+# The two cheapest strategies. Grammar and evolutionary search carry state and
+# cost more than they return at this scale.
+enabled = ["havoc", "random-mutation"]
+
+[feedback]
+providers = ["edge-coverage", "exit-class"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 16
+
+[reproduction]
+attempts = 3
+required_successes = 2
+minimize = true
+minimize_max_execs = 300
+
+[output]
+dir = ".aether"
+report_formats = ["json"]
+# 0 keeps logging out of the execution path entirely.
+telemetry_level = 0
+max_log_bytes = 4096

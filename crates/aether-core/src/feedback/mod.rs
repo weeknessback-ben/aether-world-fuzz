@@ -83,7 +83,10 @@ impl std::fmt::Debug for FeedbackEngine {
     // provider ids, which is what is useful when a test or a log shows one.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FeedbackEngine")
-            .field("providers", &self.providers.iter().map(|p| p.id()).collect::<Vec<_>>())
+            .field(
+                "providers",
+                &self.providers.iter().map(|p| p.id()).collect::<Vec<_>>(),
+            )
             .field("instrumented", &self.instrumented)
             .field("total_edges", &self.coverage.total_edges())
             .field("cmp_tokens", &self.cmp_tokens.len())
@@ -115,9 +118,9 @@ impl FeedbackEngine {
                 "state-transition" => {
                     providers.push(Box::new(semantic::StateTransitionProvider::default()))
                 }
-                "invariant" => {
-                    providers.push(Box::new(semantic::InvariantProvider::new(invariants.clone())))
-                }
+                "invariant" => providers.push(Box::new(semantic::InvariantProvider::new(
+                    invariants.clone(),
+                ))),
                 other => {
                     return Err(crate::error::Error::config(
                         "feedback.providers",
@@ -188,7 +191,10 @@ impl FeedbackEngine {
 
     /// Fold one execution into campaign state and return what it contributed.
     pub fn observe(&mut self, input: &[u8], outcome: &ExecOutcome) -> Feedback {
-        let coverage = outcome.coverage.as_ref().map(|map| self.coverage.observe(map));
+        let coverage = outcome
+            .coverage
+            .as_ref()
+            .map(|map| self.coverage.observe(map));
         let new_cmp_tokens = self.cmp_tokens.observe(&outcome.cmp_entries);
 
         let obs = Observation { input, outcome };
@@ -308,13 +314,22 @@ mod tests {
     #[test]
     fn coverage_novelty_flows_through() {
         let mut e = engine(&["edge-coverage", "exit-class"], true);
-        let f1 = e.observe(b"a", &outcome_with(ExitClass::Ok, b"", Some(cov(&[(1, 1)]))));
+        let f1 = e.observe(
+            b"a",
+            &outcome_with(ExitClass::Ok, b"", Some(cov(&[(1, 1)]))),
+        );
         assert_eq!(f1.coverage.unwrap().new_edges, 1);
         assert!(f1.is_interesting());
 
-        let f2 = e.observe(b"a", &outcome_with(ExitClass::Ok, b"", Some(cov(&[(1, 1)]))));
+        let f2 = e.observe(
+            b"a",
+            &outcome_with(ExitClass::Ok, b"", Some(cov(&[(1, 1)]))),
+        );
         assert_eq!(f2.coverage.unwrap().new_edges, 0);
-        assert!(!f2.is_interesting(), "identical run must not read as progress");
+        assert!(
+            !f2.is_interesting(),
+            "identical run must not read as progress"
+        );
     }
 
     #[test]
@@ -335,7 +350,10 @@ mod tests {
             .unavailable_signals()
             .iter()
             .any(|(id, _)| id == "invariant"));
-        assert!(e.provider_descriptions().iter().all(|d| d.id != "invariant"));
+        assert!(e
+            .provider_descriptions()
+            .iter()
+            .all(|d| d.id != "invariant"));
     }
 
     #[test]
@@ -369,8 +387,15 @@ mod tests {
         let f2 = two.observe(b"", &o);
         assert!(f1.novelty <= 1.0 && f2.novelty <= 1.0);
         assert_eq!(f1.novelty, 1.0);
-        assert_eq!(f2.novelty, 1.0, "both providers fired, so normalised novelty is still 1");
-        assert_eq!(f2.components.len(), 2, "components stay visible per provider");
+        assert_eq!(
+            f2.novelty, 1.0,
+            "both providers fired, so normalised novelty is still 1"
+        );
+        assert_eq!(
+            f2.components.len(),
+            2,
+            "components stay visible per provider"
+        );
     }
 
     #[test]
@@ -392,18 +417,29 @@ mod tests {
         // A second run: exit-class is no longer novel, and the only other
         // provider is weighted out, so novelty collapses.
         let f2 = e.observe(b"", &outcome_with(ExitClass::Ok, b"250 b\n230 a\n", None));
-        assert_eq!(f2.novelty, 0.0, "a zero-weighted provider must not drive novelty");
+        assert_eq!(
+            f2.novelty, 0.0,
+            "a zero-weighted provider must not drive novelty"
+        );
     }
 
     #[test]
     fn value_per_cost_prefers_cheaper_discovery() {
         let cheap = Feedback {
-            coverage: Some(CoverageGain { new_edges: 2, new_buckets: 0, touched: 5 }),
+            coverage: Some(CoverageGain {
+                new_edges: 2,
+                new_buckets: 0,
+                touched: 5,
+            }),
             cost_micros: 500,
             ..Default::default()
         };
         let dear = Feedback {
-            coverage: Some(CoverageGain { new_edges: 2, new_buckets: 0, touched: 5 }),
+            coverage: Some(CoverageGain {
+                new_edges: 2,
+                new_buckets: 0,
+                touched: 5,
+            }),
             cost_micros: 50_000,
             ..Default::default()
         };
@@ -416,11 +452,18 @@ mod tests {
     #[test]
     fn value_per_cost_is_finite_for_an_instant_execution() {
         let f = Feedback {
-            coverage: Some(CoverageGain { new_edges: 1, new_buckets: 0, touched: 1 }),
+            coverage: Some(CoverageGain {
+                new_edges: 1,
+                new_buckets: 0,
+                touched: 1,
+            }),
             cost_micros: 0,
             ..Default::default()
         };
-        assert!(f.value_per_cost().is_finite(), "a floored cost must bound the ratio");
+        assert!(
+            f.value_per_cost().is_finite(),
+            "a floored cost must bound the ratio"
+        );
     }
 
     #[test]

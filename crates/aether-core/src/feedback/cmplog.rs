@@ -79,7 +79,11 @@ pub struct CmpTokenStore {
 
 impl CmpTokenStore {
     pub fn new(capacity: usize) -> Self {
-        CmpTokenStore { tokens: HashMap::new(), sites: HashMap::new(), capacity: capacity.max(1) }
+        CmpTokenStore {
+            tokens: HashMap::new(),
+            sites: HashMap::new(),
+            capacity: capacity.max(1),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -114,7 +118,10 @@ impl CmpTokenStore {
             if e.v0 == 0 || e.v0 == u64::MAX {
                 continue;
             }
-            let token = CmpToken { value: e.v0, width: e.width };
+            let token = CmpToken {
+                value: e.v0,
+                width: e.width,
+            };
             match self.tokens.get_mut(&token) {
                 Some(c) => *c += 1,
                 None => {
@@ -159,8 +166,14 @@ impl CmpTokenStore {
             if !e.is_const || out.len() >= max {
                 continue;
             }
-            let want = CmpToken { value: e.v1, width: e.width };
-            let repl = CmpToken { value: e.v0, width: e.width };
+            let want = CmpToken {
+                value: e.v1,
+                width: e.width,
+            };
+            let repl = CmpToken {
+                value: e.v0,
+                width: e.width,
+            };
             if e.v0 == e.v1 {
                 continue;
             }
@@ -172,7 +185,10 @@ impl CmpTokenStore {
                     continue; // matches everywhere, teaches nothing
                 }
                 for off in find_all(input, &pattern, 4) {
-                    out.push(Substitution { offset: off, bytes: replacement.clone() });
+                    out.push(Substitution {
+                        offset: off,
+                        bytes: replacement.clone(),
+                    });
                     if out.len() >= max {
                         break;
                     }
@@ -209,12 +225,21 @@ mod tests {
     use super::*;
 
     fn entry(v0: u64, v1: u64, width: u8, is_const: bool) -> CmpEntry {
-        CmpEntry { v0, v1, pc_hash: 0x1234, width, is_const }
+        CmpEntry {
+            v0,
+            v1,
+            pc_hash: 0x1234,
+            width,
+            is_const,
+        }
     }
 
     #[test]
     fn token_encodes_in_both_endiannesses() {
-        let t = CmpToken { value: 0xDEAD_BEEF, width: 4 };
+        let t = CmpToken {
+            value: 0xDEAD_BEEF,
+            width: 4,
+        };
         assert_eq!(t.le_bytes(), vec![0xEF, 0xBE, 0xAD, 0xDE]);
         assert_eq!(t.be_bytes(), vec![0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(t.candidate_encodings().len(), 2);
@@ -222,7 +247,10 @@ mod tests {
 
     #[test]
     fn narrow_tokens_truncate_correctly() {
-        let t = CmpToken { value: 0x5A, width: 1 };
+        let t = CmpToken {
+            value: 0x5A,
+            width: 1,
+        };
         assert_eq!(t.le_bytes(), vec![0x5A]);
         assert_eq!(t.be_bytes(), vec![0x5A]);
         // A single byte reads the same either way, so only one encoding.
@@ -248,15 +276,18 @@ mod tests {
             entry(u64::MAX, 5, 8, true),
             entry(0xDEADBEEF, 5, 4, true),
         ]);
-        assert_eq!(s.len(), 1, "zero and all-ones are length/flag checks, not magics");
+        assert_eq!(
+            s.len(),
+            1,
+            "zero and all-ones are length/flag checks, not magics"
+        );
         assert_eq!(s.ranked()[0].0.value, 0xDEADBEEF);
     }
 
     #[test]
     fn store_is_bounded() {
         let mut s = CmpTokenStore::new(10);
-        let entries: Vec<CmpEntry> =
-            (1..1000u64).map(|i| entry(i, 0, 8, true)).collect();
+        let entries: Vec<CmpEntry> = (1..1000u64).map(|i| entry(i, 0, 8, true)).collect();
         let new = s.observe(&entries);
         assert_eq!(s.len(), 10, "store must not grow without limit");
         assert_eq!(new, 10);
@@ -270,7 +301,10 @@ mod tests {
             s.observe(&[entry(0x2222, 1, 2, true)]);
         }
         let r = s.ranked();
-        assert_eq!(r[0].0.value, 0x2222, "the repeatedly compared constant should lead");
+        assert_eq!(
+            r[0].0.value, 0x2222,
+            "the repeatedly compared constant should lead"
+        );
         assert_eq!(r[0].1, 6);
     }
 
@@ -308,8 +342,7 @@ mod tests {
 
         // Applying it must produce an input containing the wanted constant.
         let mut patched = input.clone();
-        patched[first.offset..first.offset + first.bytes.len()]
-            .copy_from_slice(&first.bytes);
+        patched[first.offset..first.offset + first.bytes.len()].copy_from_slice(&first.bytes);
         assert_eq!(&patched[..4], &[0xEF, 0xBE, 0xAD, 0xDE]);
     }
 
@@ -336,8 +369,9 @@ mod tests {
     fn substitution_count_is_bounded() {
         let s = CmpTokenStore::new(64);
         let input = vec![0x41u8; 512];
-        let entries: Vec<CmpEntry> =
-            (0..200).map(|i| entry(0x1000 + i, 0x4141_4141, 4, true)).collect();
+        let entries: Vec<CmpEntry> = (0..200)
+            .map(|i| entry(0x1000 + i, 0x4141_4141, 4, true))
+            .collect();
         let subs = s.substitutions_for(&input, &entries, 5);
         assert!(subs.len() <= 5, "got {}", subs.len());
     }

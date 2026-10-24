@@ -1,0 +1,42 @@
+# Quick look at an unfamiliar target.
+#
+# Thirty seconds is enough to answer one question: does coverage grow at all?
+# If it stays flat, the harness or the seeds are the problem and no amount of
+# extra time will help.
+schema_version = 1
+
+[target]
+name = "crash_magic"
+kind = "executable"
+binary = "build/crash_magic"
+input_mode = "stdin"
+timeout_ms = 1000
+memory_limit_mb = 512
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 30
+workers = 1
+seed = 20260124
+max_input_bytes = 65536
+
+[strategies]
+# The three that need no setup. cmplog-guided is first because on a target
+# gated by magic values it is usually the only one that gets past them.
+enabled = ["cmplog-guided", "havoc", "random-mutation"]
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "cmplog", "sanitizer"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 32
+
+[reproduction]
+attempts = 5
+required_successes = 3
+minimize = true
+
+[output]
+dir = ".aether"
+report_formats = ["json", "markdown"]

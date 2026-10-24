@@ -12,27 +12,57 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum Error {
     /// A configuration file or value failed validation before any work ran.
-    Config { what: String, detail: String },
+    Config {
+        what: String,
+        detail: String,
+    },
     /// The requested target cannot be used as described.
-    Target { what: String, detail: String },
+    Target {
+        what: String,
+        detail: String,
+    },
     /// The operation was refused by the authorization/scope policy. This is
     /// never downgraded to a warning: an out-of-scope target is a hard stop.
-    Scope { what: String, detail: String },
+    Scope {
+        what: String,
+        detail: String,
+    },
     /// A capability the request needs is not present in this environment.
     /// Carries the remedy so `aether doctor` and MCP errors can relay it.
-    Unsupported { capability: String, reason: String, remedy: Option<String> },
+    Unsupported {
+        capability: String,
+        reason: String,
+        remedy: Option<String>,
+    },
     /// Target execution failed for reasons attributable to AETHER, not to the
     /// target. A crashing target is a normal result, not this.
-    Exec { what: String, detail: String },
+    Exec {
+        what: String,
+        detail: String,
+    },
     /// Corpus or finding storage failed.
-    Storage { what: String, detail: String },
+    Storage {
+        what: String,
+        detail: String,
+    },
     /// An identifier did not resolve.
-    NotFound { kind: &'static str, id: String },
+    NotFound {
+        kind: &'static str,
+        id: String,
+    },
     /// A state machine rejected a transition.
-    InvalidTransition { from: String, to: String },
+    InvalidTransition {
+        from: String,
+        to: String,
+    },
     /// The operation was cancelled by the user or a budget expiring.
-    Cancelled { what: String },
-    Io { path: Option<PathBuf>, source: std::io::Error },
+    Cancelled {
+        what: String,
+    },
+    Io {
+        path: Option<PathBuf>,
+        source: std::io::Error,
+    },
     Sqlite(rusqlite::Error),
     Json(serde_json::Error),
 }
@@ -58,19 +88,34 @@ impl Error {
     }
 
     pub fn config(what: impl Into<String>, detail: impl Into<String>) -> Self {
-        Error::Config { what: what.into(), detail: detail.into() }
+        Error::Config {
+            what: what.into(),
+            detail: detail.into(),
+        }
     }
     pub fn target(what: impl Into<String>, detail: impl Into<String>) -> Self {
-        Error::Target { what: what.into(), detail: detail.into() }
+        Error::Target {
+            what: what.into(),
+            detail: detail.into(),
+        }
     }
     pub fn scope(what: impl Into<String>, detail: impl Into<String>) -> Self {
-        Error::Scope { what: what.into(), detail: detail.into() }
+        Error::Scope {
+            what: what.into(),
+            detail: detail.into(),
+        }
     }
     pub fn exec(what: impl Into<String>, detail: impl Into<String>) -> Self {
-        Error::Exec { what: what.into(), detail: detail.into() }
+        Error::Exec {
+            what: what.into(),
+            detail: detail.into(),
+        }
     }
     pub fn storage(what: impl Into<String>, detail: impl Into<String>) -> Self {
-        Error::Storage { what: what.into(), detail: detail.into() }
+        Error::Storage {
+            what: what.into(),
+            detail: detail.into(),
+        }
     }
     pub fn unsupported(capability: impl Into<String>, reason: impl Into<String>) -> Self {
         Error::Unsupported {
@@ -91,10 +136,16 @@ impl Error {
         }
     }
     pub fn not_found(kind: &'static str, id: impl Into<String>) -> Self {
-        Error::NotFound { kind, id: id.into() }
+        Error::NotFound {
+            kind,
+            id: id.into(),
+        }
     }
     pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
-        Error::Io { path: Some(path.into()), source }
+        Error::Io {
+            path: Some(path.into()),
+            source,
+        }
     }
 }
 
@@ -106,7 +157,11 @@ impl fmt::Display for Error {
             Error::Scope { what, detail } => {
                 write!(f, "refused by scope policy: {what}: {detail}")
             }
-            Error::Unsupported { capability, reason, remedy } => {
+            Error::Unsupported {
+                capability,
+                reason,
+                remedy,
+            } => {
                 write!(f, "capability '{capability}' unavailable: {reason}")?;
                 if let Some(r) = remedy {
                     write!(f, " (remedy: {r})")?;
@@ -143,7 +198,10 @@ impl std::error::Error for Error {
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Error::Io { path: None, source: e }
+        Error::Io {
+            path: None,
+            source: e,
+        }
     }
 }
 impl From<rusqlite::Error> for Error {

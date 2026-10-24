@@ -325,7 +325,10 @@ mod tests {
         let insert = "INSERT INTO inputs(id, content_hash, campaign_id, created_ms, size_bytes) \
                       VALUES (?1, ?2, 'cmp-1', 0, 4)";
         s.conn().execute(insert, params!["inp-1", "aa00"]).unwrap();
-        let err = s.conn().execute(insert, params!["inp-2", "aa00"]).unwrap_err();
+        let err = s
+            .conn()
+            .execute(insert, params!["inp-2", "aa00"])
+            .unwrap_err();
         assert!(err.to_string().contains("UNIQUE"), "{err}");
 
         // The same content in a *different* campaign is fine.
@@ -356,7 +359,9 @@ mod tests {
             )
             .unwrap();
         s.record_event("cmp-1", "started", None).unwrap();
-        s.conn().execute("DELETE FROM campaigns WHERE id='cmp-1'", []).unwrap();
+        s.conn()
+            .execute("DELETE FROM campaigns WHERE id='cmp-1'", [])
+            .unwrap();
 
         for table in ["inputs", "events"] {
             let n: i64 = s
@@ -371,7 +376,8 @@ mod tests {
     fn events_round_trip_newest_first_and_bounded() {
         let s = store_with_campaign();
         for i in 0..10 {
-            s.record_event("cmp-1", "tick", Some(&format!("n={i}"))).unwrap();
+            s.record_event("cmp-1", "tick", Some(&format!("n={i}")))
+                .unwrap();
         }
         let got = s.recent_events("cmp-1", 3).unwrap();
         assert_eq!(got.len(), 3, "limit must be honoured");

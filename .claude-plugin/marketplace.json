@@ -1,0 +1,14 @@
+{
+  "name": "aether",
+  "owner": {
+    "name": "AETHER contributors",
+    "url": "https://github.com/weeknessback-ben/self-aware_fuzz"
+  },
+  "plugins": [
+    {
+      "name": "aether-fuzzing",
+      "source": "./integrations/claude-code",
+      "description": "Adaptive hybrid fuzzing: design a campaign, run it, and validate what it finds into reproducible evidence."
+    }
+  ]
+}

@@ -128,7 +128,11 @@ fn after_error_marker(line: &str) -> Option<&str> {
         // so the word ERROR inside arbitrary target output does not qualify.
         let prefix = &line[..idx];
         if prefix.is_empty()
-            || (prefix.starts_with("==") && prefix.trim_start_matches(['=', ' ']).chars().all(|c| c.is_ascii_digit() || c == '=')
+            || (prefix.starts_with("==")
+                && prefix
+                    .trim_start_matches(['=', ' '])
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == '=')
                 && prefix.ends_with("=="))
         {
             return Some(&line[idx + "ERROR: ".len()..]);
@@ -243,9 +247,7 @@ fn strip_location(tail: &str) -> &str {
     match tail.rsplit_once(char::is_whitespace) {
         Some((head, last))
             if !head.is_empty()
-                && (last.starts_with('(')
-                    || last.contains('/')
-                    || last.contains(':')) =>
+                && (last.starts_with('(') || last.contains('/') || last.contains(':')) =>
         {
             head.trim_end()
         }
@@ -312,7 +314,10 @@ SUMMARY: AddressSanitizer: stack-buffer-overflow
 
     #[test]
     fn parses_leak_report_without_error_line() {
-        let r = parse("\n==77==ERROR: LeakSanitizer: detected memory leaks\n\nDirect leak of 16 byte(s)\n").unwrap();
+        let r = parse(
+            "\n==77==ERROR: LeakSanitizer: detected memory leaks\n\nDirect leak of 16 byte(s)\n",
+        )
+        .unwrap();
         assert_eq!(r.kind, SanitizerKind::LeakCheck);
     }
 
@@ -352,7 +357,11 @@ SUMMARY: AddressSanitizer: stack-buffer-overflow
             s.push_str(&format!("    #{i} 0xdead in func_{i} /src/a.c:{i}\n"));
         }
         let r = parse(&s).unwrap();
-        assert!(r.frames.len() <= MAX_FRAMES, "got {} frames", r.frames.len());
+        assert!(
+            r.frames.len() <= MAX_FRAMES,
+            "got {} frames",
+            r.frames.len()
+        );
     }
 
     #[test]

@@ -97,7 +97,11 @@ impl TargetSpec {
         Ok(TargetSpec {
             binary,
             args: cfg.args.clone(),
-            env: cfg.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            env: cfg
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             working_dir: cfg.working_dir.clone(),
             input_mode: cfg.input_mode,
             timeout: Duration::from_millis(cfg.timeout_ms),
@@ -148,7 +152,10 @@ fn resolve_binary(path: &Path) -> Result<PathBuf> {
         )
     })?;
     if !meta.is_file() {
-        return Err(Error::target("binary", format!("{} is not a file", abs.display())));
+        return Err(Error::target(
+            "binary",
+            format!("{} is not a file", abs.display()),
+        ));
     }
     use std::os::unix::fs::PermissionsExt;
     if meta.permissions().mode() & 0o111 == 0 {
@@ -179,9 +186,14 @@ fn detect_sanitizer_build(path: &Path) -> bool {
     // Sanitizer markers live in the dynamic/symbol tables; a few megabytes is
     // ample, and capping the read keeps this cheap for a large binary.
     const MAX_SCAN: usize = 8 * 1024 * 1024;
-    let Ok(f) = File::open(path) else { return false };
+    let Ok(f) = File::open(path) else {
+        return false;
+    };
     let mut buf = Vec::new();
-    if Read::take(f, MAX_SCAN as u64).read_to_end(&mut buf).is_err() {
+    if Read::take(f, MAX_SCAN as u64)
+        .read_to_end(&mut buf)
+        .is_err()
+    {
         return false;
     }
     NEEDLES.iter().any(|n| contains_subslice(&buf, n))
@@ -208,9 +220,8 @@ impl ForkServer {
             .write_all(&0u32.to_ne_bytes())
             .map_err(|e| Error::exec("fork server", format!("control pipe write failed: {e}")))?;
         let mut buf = [0u8; 4];
-        read_exact_timeout(self.st_read.as_raw_fd(), &mut buf, HANDSHAKE_TIMEOUT).map_err(
-            |e| Error::exec("fork server", format!("no child pid reported: {e}")),
-        )?;
+        read_exact_timeout(self.st_read.as_raw_fd(), &mut buf, HANDSHAKE_TIMEOUT)
+            .map_err(|e| Error::exec("fork server", format!("no child pid reported: {e}")))?;
         Ok(i32::from_ne_bytes(buf))
     }
 
@@ -221,9 +232,10 @@ impl ForkServer {
         match read_exact_timeout(self.st_read.as_raw_fd(), &mut buf, timeout) {
             Ok(()) => Ok(Some(i32::from_ne_bytes(buf))),
             Err(ReadTimeout::TimedOut) => Ok(None),
-            Err(ReadTimeout::Failed(e)) => {
-                Err(Error::exec("fork server", format!("status pipe read failed: {e}")))
-            }
+            Err(ReadTimeout::Failed(e)) => Err(Error::exec(
+                "fork server",
+                format!("status pipe read failed: {e}"),
+            )),
         }
     }
 }
@@ -284,7 +296,11 @@ impl NativeExecutor {
 
         let mut limit_report = spec.limits.probe();
         if spec.sanitizer_build {
-            let rss = if spec.memory_limit_mb > 0 { spec.memory_limit_mb } else { 2048 };
+            let rss = if spec.memory_limit_mb > 0 {
+                spec.memory_limit_mb
+            } else {
+                2048
+            };
             limit_report.memory_limit_substituted = Some(format!(
                 "RLIMIT_AS not applied to this sanitizer build (its shadow mapping needs \
                  ~20 TiB of address space); memory bounded by ASAN_OPTIONS \
@@ -406,7 +422,11 @@ impl NativeExecutor {
         let ctl_write = unsafe { File::from_raw_fd(ctl_w) };
         let st_read = unsafe { File::from_raw_fd(st_r) };
         #[allow(unused_mut)]
-        let mut fs = ForkServer { child, ctl_write, st_read };
+        let mut fs = ForkServer {
+            child,
+            ctl_write,
+            st_read,
+        };
 
         let mut hello = [0u8; 4];
         match read_exact_timeout(fs.st_read.as_raw_fd(), &mut hello, HANDSHAKE_TIMEOUT) {
@@ -462,7 +482,10 @@ impl NativeExecutor {
                  hard_rss_limit_mb={rss}:log_to_syslog=0:exitcode=86"
             );
             cmd.env("ASAN_OPTIONS", &opts);
-            cmd.env("UBSAN_OPTIONS", "print_stacktrace=1:halt_on_error=1:exitcode=86");
+            cmd.env(
+                "UBSAN_OPTIONS",
+                "print_stacktrace=1:halt_on_error=1:exitcode=86",
+            );
             cmd.env("MSAN_OPTIONS", &opts);
         }
         if let Some(shm) = &self.shm {
@@ -622,7 +645,10 @@ impl NativeExecutor {
 
         let start = Instant::now();
         let mut child = cmd.spawn().map_err(|e| {
-            Error::exec("exec", format!("could not start {}: {e}", self.spec.binary.display()))
+            Error::exec(
+                "exec",
+                format!("could not start {}: {e}", self.spec.binary.display()),
+            )
         })?;
         let pid = child.id() as i32;
 
@@ -632,12 +658,7 @@ impl NativeExecutor {
     }
 
     /// Shared tail of both modes: gather outputs, classify, package.
-    fn finish(
-        &mut self,
-        status: i32,
-        timed_out: bool,
-        duration: Duration,
-    ) -> Result<ExecOutcome> {
+    fn finish(&mut self, status: i32, timed_out: bool, duration: Duration) -> Result<ExecOutcome> {
         self.exec_count += 1;
 
         let max_log = self.spec.max_log_bytes;
@@ -719,7 +740,10 @@ fn pipe() -> Result<(RawFd, RawFd)> {
     let mut fds = [0 as libc::c_int; 2];
     let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
     if rc != 0 {
-        return Err(Error::exec("pipe", std::io::Error::last_os_error().to_string()));
+        return Err(Error::exec(
+            "pipe",
+            std::io::Error::last_os_error().to_string(),
+        ));
     }
     Ok((fds[0], fds[1]))
 }
@@ -758,7 +782,11 @@ fn read_exact_timeout(
         if remaining.is_zero() {
             return Err(ReadTimeout::TimedOut);
         }
-        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
         let ms = remaining.as_millis().min(i32::MAX as u128) as i32;
         let rc = unsafe { libc::poll(&mut pfd, 1, ms) };
         if rc < 0 {
@@ -794,11 +822,7 @@ fn read_exact_timeout(
 }
 
 /// Wait for a child, SIGKILLing its process group once the deadline passes.
-fn wait_with_deadline(
-    child: &mut Child,
-    pid: i32,
-    timeout: Duration,
-) -> Result<(i32, bool)> {
+fn wait_with_deadline(child: &mut Child, pid: i32, timeout: Duration) -> Result<(i32, bool)> {
     let deadline = Instant::now() + timeout;
     // Poll rather than block: `waitpid` has no timeout, and a dedicated
     // reaper thread per execution would cost more than this at the rates a

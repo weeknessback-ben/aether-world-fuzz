@@ -204,7 +204,9 @@ impl Corpus {
     /// when they were all computed against the same ones. This is what keeps
     /// `ORDER BY score` meaningful.
     pub fn rescore_all(&self, store: &mut Store) -> Result<u64> {
-        let rows: Vec<(String, u32, u32, u64, usize, u64, Option<String>)> = {
+        // (id, new_edges, touched_edges, exec_micros, size_bytes, exec_count, behavior_sig)
+        type ScoreRow = (String, u32, u32, u64, usize, u64, Option<String>);
+        let rows: Vec<ScoreRow> = {
             let mut stmt = store.conn().prepare(
                 "SELECT id, new_edges, touched_edges, exec_micros, size_bytes, exec_count, \
                  behavior_sig FROM inputs WHERE campaign_id = ?1",
@@ -325,7 +327,11 @@ impl Corpus {
             content_hash: r.get(1).unwrap_or_default(),
             campaign_id: self.campaign_id.clone(),
             strategy_id: r.get(2).ok(),
-            parent_id: r.get::<_, Option<String>>(3).ok().flatten().map(InputId::from_string),
+            parent_id: r
+                .get::<_, Option<String>>(3)
+                .ok()
+                .flatten()
+                .map(InputId::from_string),
             created_ms: r.get::<_, i64>(4).unwrap_or(0) as u64,
             size_bytes: r.get::<_, i64>(5).unwrap_or(0) as usize,
             exec_count: r.get::<_, i64>(6).unwrap_or(0) as u64,
@@ -408,10 +414,9 @@ impl Corpus {
                  WHERE campaign_id = ?1 AND finding_id IS NULL \
                  ORDER BY score ASC, id ASC LIMIT ?2",
             )?;
-            let rows = stmt.query_map(
-                params![self.campaign_id.as_str(), excess as i64],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-            )?;
+            let rows = stmt.query_map(params![self.campaign_id.as_str(), excess as i64], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
 
@@ -444,7 +449,9 @@ impl Corpus {
         let mut stmt = store
             .conn()
             .prepare("SELECT content_hash FROM inputs WHERE campaign_id = ?1")?;
-        let rows = stmt.query_map(params![self.campaign_id.as_str()], |r| r.get::<_, String>(0))?;
+        let rows = stmt.query_map(params![self.campaign_id.as_str()], |r| {
+            r.get::<_, String>(0)
+        })?;
         let mut n = 0;
         for hash in rows {
             let hash = hash?;
@@ -457,18 +464,16 @@ impl Corpus {
     }
 
     /// Import seed files from `dir`. Returns (added, duplicates, rejected).
-    pub fn import_seeds(
-        &mut self,
-        store: &mut Store,
-        dir: &Path,
-    ) -> Result<(u64, u64, u64)> {
+    pub fn import_seeds(&mut self, store: &mut Store, dir: &Path) -> Result<(u64, u64, u64)> {
         let entries = std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))?;
         let (mut added, mut dup, mut rejected) = (0, 0, 0);
         for e in entries.flatten() {
             let p = e.path();
             // Only regular files, and never through a symlink: a seed
             // directory is attacker-adjacent input.
-            let Ok(meta) = std::fs::symlink_metadata(&p) else { continue };
+            let Ok(meta) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
             if !meta.is_file() {
                 continue;
             }
@@ -476,7 +481,14 @@ impl Corpus {
                 rejected += 1;
                 continue;
             };
-            match self.add(store, &bytes, NewInput { strategy_id: Some("imported-seed"), ..Default::default() })? {
+            match self.add(
+                store,
+                &bytes,
+                NewInput {
+                    strategy_id: Some("imported-seed"),
+                    ..Default::default()
+                },
+            )? {
                 AddOutcome::Added(_) => added += 1,
                 AddOutcome::Duplicate(_) => dup += 1,
                 AddOutcome::Rejected(_) => rejected += 1,
@@ -584,15 +596,13 @@ mod tests {
                     params![cid.as_str()],
                 )
                 .unwrap();
-            let corpus = Corpus::open(
-                &dir,
-                cid,
-                CorpusWeights::default(),
-                max_inputs,
-                1 << 20,
-            )
-            .unwrap();
-            Fixture { _dir: dir, corpus, store }
+            let corpus =
+                Corpus::open(&dir, cid, CorpusWeights::default(), max_inputs, 1 << 20).unwrap();
+            Fixture {
+                _dir: dir,
+                corpus,
+                store,
+            }
         }
     }
 
@@ -605,10 +615,16 @@ mod tests {
     #[test]
     fn adds_and_deduplicates() {
         let mut f = Fixture::new(100);
-        let a = f.corpus.add(&mut f.store, b"hello", NewInput::default()).unwrap();
+        let a = f
+            .corpus
+            .add(&mut f.store, b"hello", NewInput::default())
+            .unwrap();
         assert!(matches!(a, AddOutcome::Added(_)));
 
-        let b = f.corpus.add(&mut f.store, b"hello", NewInput::default()).unwrap();
+        let b = f
+            .corpus
+            .add(&mut f.store, b"hello", NewInput::default())
+            .unwrap();
         match (a, b) {
             (AddOutcome::Added(id1), AddOutcome::Duplicate(id2)) => assert_eq!(id1, id2),
             other => panic!("expected a duplicate pointing at the original: {other:?}"),
@@ -631,7 +647,7 @@ mod tests {
             )
             .unwrap();
         let mut c = Corpus::open(&dir, cid, CorpusWeights::default(), 10, 16).unwrap();
-        match c.add(&mut store, &vec![0u8; 64], NewInput::default()).unwrap() {
+        match c.add(&mut store, &[0u8; 64], NewInput::default()).unwrap() {
             AddOutcome::Rejected(r) => assert!(r.contains("exceeds"), "{r}"),
             other => panic!("expected rejection, got {other:?}"),
         }
@@ -652,7 +668,14 @@ mod tests {
             };
             for (data, edges) in pairs {
                 f.corpus
-                    .add(&mut f.store, data, NewInput { new_edges: edges, ..Default::default() })
+                    .add(
+                        &mut f.store,
+                        data,
+                        NewInput {
+                            new_edges: edges,
+                            ..Default::default()
+                        },
+                    )
                     .unwrap();
             }
             let top = f.corpus.top(&f.store, 10).unwrap();
@@ -669,14 +692,28 @@ mod tests {
     fn scores_are_refreshed_when_a_maximum_moves() {
         let mut f = Fixture::new(100);
         f.corpus
-            .add(&mut f.store, b"first", NewInput { new_edges: 2, ..Default::default() })
+            .add(
+                &mut f.store,
+                b"first",
+                NewInput {
+                    new_edges: 2,
+                    ..Default::default()
+                },
+            )
             .unwrap();
         let before = f.corpus.top(&f.store, 1).unwrap()[0].score;
 
         // A far better input raises the coverage maximum, which must deflate
         // the first input's relative score.
         f.corpus
-            .add(&mut f.store, b"better", NewInput { new_edges: 200, ..Default::default() })
+            .add(
+                &mut f.store,
+                b"better",
+                NewInput {
+                    new_edges: 200,
+                    ..Default::default()
+                },
+            )
             .unwrap();
         let first_after = f
             .corpus
@@ -702,7 +739,10 @@ mod tests {
                 .add(
                     &mut f.store,
                     data.as_bytes(),
-                    NewInput { new_edges: i, ..Default::default() },
+                    NewInput {
+                        new_edges: i,
+                        ..Default::default()
+                    },
                 )
                 .unwrap();
         }
@@ -728,19 +768,35 @@ mod tests {
         // A poorly-ranked input that reproduces a finding.
         let evidence = match f
             .corpus
-            .add(&mut f.store, b"crasher", NewInput { new_edges: 0, ..Default::default() })
+            .add(
+                &mut f.store,
+                b"crasher",
+                NewInput {
+                    new_edges: 0,
+                    ..Default::default()
+                },
+            )
             .unwrap()
         {
             AddOutcome::Added(id) => id,
             other => panic!("{other:?}"),
         };
-        f.corpus.mark_finding_input(&f.store, &evidence, &finding).unwrap();
+        f.corpus
+            .mark_finding_input(&f.store, &evidence, &finding)
+            .unwrap();
 
         // Several better-ranked ordinary inputs.
         for i in 1..5u32 {
             let d = format!("ordinary-{i}");
             f.corpus
-                .add(&mut f.store, d.as_bytes(), NewInput { new_edges: i * 10, ..Default::default() })
+                .add(
+                    &mut f.store,
+                    d.as_bytes(),
+                    NewInput {
+                        new_edges: i * 10,
+                        ..Default::default()
+                    },
+                )
                 .unwrap();
         }
 
@@ -751,7 +807,18 @@ mod tests {
             "the finding's input was evicted by retention"
         );
         // And its content is still readable.
-        assert_eq!(f.corpus.get_bytes(&remaining.iter().find(|r| r.id == evidence).unwrap().content_hash).unwrap(), b"crasher");
+        assert_eq!(
+            f.corpus
+                .get_bytes(
+                    &remaining
+                        .iter()
+                        .find(|r| r.id == evidence)
+                        .unwrap()
+                        .content_hash
+                )
+                .unwrap(),
+            b"crasher"
+        );
     }
 
     #[test]
@@ -759,7 +826,14 @@ mod tests {
         let mut f = Fixture::new(100);
         let parent = match f
             .corpus
-            .add(&mut f.store, b"seed", NewInput { strategy_id: Some("imported-seed"), ..Default::default() })
+            .add(
+                &mut f.store,
+                b"seed",
+                NewInput {
+                    strategy_id: Some("imported-seed"),
+                    ..Default::default()
+                },
+            )
             .unwrap()
         {
             AddOutcome::Added(id) => id,
@@ -770,7 +844,11 @@ mod tests {
             .add(
                 &mut f.store,
                 b"mutated",
-                NewInput { strategy_id: Some("havoc"), parent_id: Some(&parent), ..Default::default() },
+                NewInput {
+                    strategy_id: Some("havoc"),
+                    parent_id: Some(&parent),
+                    ..Default::default()
+                },
             )
             .unwrap()
         {
@@ -789,7 +867,14 @@ mod tests {
         for i in 0..20u32 {
             let d = format!("i{i}");
             f.corpus
-                .add(&mut f.store, d.as_bytes(), NewInput { new_edges: i, ..Default::default() })
+                .add(
+                    &mut f.store,
+                    d.as_bytes(),
+                    NewInput {
+                        new_edges: i,
+                        ..Default::default()
+                    },
+                )
                 .unwrap();
         }
         let draw = |seed: u64| {
@@ -820,7 +905,9 @@ mod tests {
         let mut f = Fixture::new(100);
         for i in 0..5u32 {
             let d = format!("payload-{i}");
-            f.corpus.add(&mut f.store, d.as_bytes(), NewInput::default()).unwrap();
+            f.corpus
+                .add(&mut f.store, d.as_bytes(), NewInput::default())
+                .unwrap();
         }
         let out = f._dir.join("exported");
         assert_eq!(f.corpus.export(&f.store, &out).unwrap(), 5);
@@ -838,13 +925,34 @@ mod tests {
     fn stats_report_the_corpus_shape() {
         let mut f = Fixture::new(100);
         f.corpus
-            .add(&mut f.store, b"a", NewInput { behavior_sig: Some("sig-1"), ..Default::default() })
+            .add(
+                &mut f.store,
+                b"a",
+                NewInput {
+                    behavior_sig: Some("sig-1"),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         f.corpus
-            .add(&mut f.store, b"bb", NewInput { behavior_sig: Some("sig-1"), ..Default::default() })
+            .add(
+                &mut f.store,
+                b"bb",
+                NewInput {
+                    behavior_sig: Some("sig-1"),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         f.corpus
-            .add(&mut f.store, b"ccc", NewInput { behavior_sig: Some("sig-2"), ..Default::default() })
+            .add(
+                &mut f.store,
+                b"ccc",
+                NewInput {
+                    behavior_sig: Some("sig-2"),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         let s = f.corpus.stats(&f.store).unwrap();
         assert_eq!(s.entries, 3);

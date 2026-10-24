@@ -101,7 +101,8 @@ impl CoverageShm {
             }
             Err(e) => return Err(Error::io(path, e)),
         };
-        file.set_len(REGION_SIZE as u64).map_err(|e| Error::io(path, e))?;
+        file.set_len(REGION_SIZE as u64)
+            .map_err(|e| Error::io(path, e))?;
 
         let base = unsafe { map_fd(file.as_raw_fd(), REGION_SIZE) }?;
         let shm = CoverageShm {
@@ -159,8 +160,10 @@ impl CoverageShm {
         if magic != SHM_MAGIC {
             return Err(Error::exec(
                 "coverage region",
-                format!("magic {magic:#x} != expected {SHM_MAGIC:#x}; the target was not built \
-                         with this version of the AETHER runtime"),
+                format!(
+                    "magic {magic:#x} != expected {SHM_MAGIC:#x}; the target was not built \
+                         with this version of the AETHER runtime"
+                ),
             ));
         }
         let version = self.read_u32(OFF_VERSION);
@@ -250,7 +253,9 @@ impl CoverageShm {
 
     /// Read the comparisons recorded during the last run, capped at `limit`.
     pub fn read_cmp_entries(&self, limit: usize) -> Vec<CmpEntry> {
-        let len = (self.read_u32(OFF_CMP_LEN) as usize).min(CMP_CAP).min(limit);
+        let len = (self.read_u32(OFF_CMP_LEN) as usize)
+            .min(CMP_CAP)
+            .min(limit);
         let mut out = Vec::with_capacity(len);
         for i in 0..len {
             let off = OFF_CMP + i * CMP_ENTRY_SIZE;
@@ -264,7 +269,13 @@ impl CoverageShm {
                 if !matches!(width, 1 | 2 | 4 | 8) {
                     continue;
                 }
-                out.push(CmpEntry { v0, v1, pc_hash, width, is_const: is_const != 0 });
+                out.push(CmpEntry {
+                    v0,
+                    v1,
+                    pc_hash,
+                    width,
+                    is_const: is_const != 0,
+                });
             }
         }
         out
@@ -365,7 +376,11 @@ mod tests {
 
         shm.write_u32(OFF_MAGIC, SHM_MAGIC);
         shm.write_u32(OFF_VERSION, 999);
-        assert!(shm.validate_header().unwrap_err().to_string().contains("ABI version"));
+        assert!(shm
+            .validate_header()
+            .unwrap_err()
+            .to_string()
+            .contains("ABI version"));
     }
 
     #[test]
@@ -376,10 +391,18 @@ mod tests {
         assert_eq!(classify_count(3), 4);
         // Everything in one bucket must classify identically: this is what
         // keeps a loop iteration count from looking like new coverage.
-        for v in 4..=7u8 { assert_eq!(classify_count(v), 8); }
-        for v in 8..=15u8 { assert_eq!(classify_count(v), 16); }
-        for v in 32..=127u8 { assert_eq!(classify_count(v), 64); }
-        for v in 128..=255u8 { assert_eq!(classify_count(v), 128); }
+        for v in 4..=7u8 {
+            assert_eq!(classify_count(v), 8);
+        }
+        for v in 8..=15u8 {
+            assert_eq!(classify_count(v), 16);
+        }
+        for v in 32..=127u8 {
+            assert_eq!(classify_count(v), 64);
+        }
+        for v in 128..=255u8 {
+            assert_eq!(classify_count(v), 128);
+        }
     }
 
     #[test]

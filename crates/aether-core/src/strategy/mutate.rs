@@ -19,9 +19,21 @@ use crate::rng::Rng;
 /// Values that disproportionately often sit at a boundary in real code:
 /// signed and unsigned limits, off-by-ones around them, and small counts.
 const INTERESTING_8: &[i8] = &[-128, -1, 0, 1, 16, 32, 64, 100, 127];
-const INTERESTING_16: &[i16] = &[-32768, -129, -1, 0, 1, 128, 255, 256, 512, 1000, 1024, 4096, 32767];
+const INTERESTING_16: &[i16] = &[
+    -32768, -129, -1, 0, 1, 128, 255, 256, 512, 1000, 1024, 4096, 32767,
+];
 const INTERESTING_32: &[i32] = &[
-    -2147483648, -100663046, -32769, -1, 0, 1, 32768, 65535, 65536, 100663045, 2147483647,
+    -2147483648,
+    -100663046,
+    -32769,
+    -1,
+    0,
+    1,
+    32768,
+    65535,
+    65536,
+    100663045,
+    2147483647,
 ];
 
 /// Which operator produced a candidate, for per-operator accounting.
@@ -96,7 +108,7 @@ pub fn apply(op: Operator, buf: &mut Vec<u8>, rng: &mut Rng, max_len: usize) -> 
     changed
 }
 
-pub fn bit_flip(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
+pub fn bit_flip(buf: &mut [u8], rng: &mut Rng) -> bool {
     if buf.is_empty() {
         return false;
     }
@@ -106,7 +118,7 @@ pub fn bit_flip(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
     true
 }
 
-pub fn byte_flip(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
+pub fn byte_flip(buf: &mut [u8], rng: &mut Rng) -> bool {
     if buf.is_empty() {
         return false;
     }
@@ -115,7 +127,7 @@ pub fn byte_flip(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
     true
 }
 
-pub fn byte_set(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
+pub fn byte_set(buf: &mut [u8], rng: &mut Rng) -> bool {
     if buf.is_empty() {
         return false;
     }
@@ -134,7 +146,7 @@ pub fn byte_set(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
 /// Add or subtract a small delta from an integer field, at 1, 2 or 4 bytes
 /// wide and in either endianness. Catches off-by-one handling of length and
 /// count fields, which a random byte rarely does.
-pub fn arithmetic(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
+pub fn arithmetic(buf: &mut [u8], rng: &mut Rng) -> bool {
     if buf.is_empty() {
         return false;
     }
@@ -154,16 +166,32 @@ pub fn arithmetic(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
         1 => buf[i] = (buf[i] as i64).wrapping_add(delta) as u8,
         2 => {
             let mut b = [buf[i], buf[i + 1]];
-            let v = if big_endian { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) };
+            let v = if big_endian {
+                u16::from_be_bytes(b)
+            } else {
+                u16::from_le_bytes(b)
+            };
             let nv = (v as i64).wrapping_add(delta) as u16;
-            b = if big_endian { nv.to_be_bytes() } else { nv.to_le_bytes() };
+            b = if big_endian {
+                nv.to_be_bytes()
+            } else {
+                nv.to_le_bytes()
+            };
             buf[i..i + 2].copy_from_slice(&b);
         }
         _ => {
             let mut b = [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
-            let v = if big_endian { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) };
+            let v = if big_endian {
+                u32::from_be_bytes(b)
+            } else {
+                u32::from_le_bytes(b)
+            };
             let nv = (v as i64).wrapping_add(delta) as u32;
-            b = if big_endian { nv.to_be_bytes() } else { nv.to_le_bytes() };
+            b = if big_endian {
+                nv.to_be_bytes()
+            } else {
+                nv.to_le_bytes()
+            };
             buf[i..i + 4].copy_from_slice(&b);
         }
     }
@@ -171,7 +199,7 @@ pub fn arithmetic(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
 }
 
 /// Overwrite a field with a boundary value.
-pub fn interesting_value(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
+pub fn interesting_value(buf: &mut [u8], rng: &mut Rng) -> bool {
     if buf.is_empty() {
         return false;
     }
@@ -186,14 +214,22 @@ pub fn interesting_value(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
         1 if buf.len() >= 2 => {
             let i = rng.below(buf.len() - 1);
             let v = INTERESTING_16[rng.below(INTERESTING_16.len())] as u16;
-            let b = if big_endian { v.to_be_bytes() } else { v.to_le_bytes() };
+            let b = if big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
             buf[i..i + 2].copy_from_slice(&b);
             true
         }
         _ if buf.len() >= 4 => {
             let i = rng.below(buf.len() - 3);
             let v = INTERESTING_32[rng.below(INTERESTING_32.len())] as u32;
-            let b = if big_endian { v.to_be_bytes() } else { v.to_le_bytes() };
+            let b = if big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
             buf[i..i + 4].copy_from_slice(&b);
             true
         }
@@ -242,7 +278,7 @@ pub fn duplicate(buf: &mut Vec<u8>, rng: &mut Rng, max_len: usize) -> bool {
     true
 }
 
-pub fn shuffle(buf: &mut Vec<u8>, rng: &mut Rng) -> bool {
+pub fn shuffle(buf: &mut [u8], rng: &mut Rng) -> bool {
     if buf.len() < 2 {
         return false;
     }
@@ -270,7 +306,11 @@ pub fn extend(buf: &mut Vec<u8>, rng: &mut Rng, max_len: usize) -> bool {
     let n = rng.between(1, room.min(64));
     // Repeat the last byte rather than add noise: a long run of one value is
     // what tends to overflow a length-prefixed field.
-    let fill = if buf.is_empty() { rng.byte() } else { buf[buf.len() - 1] };
+    let fill = if buf.is_empty() {
+        rng.byte()
+    } else {
+        buf[buf.len() - 1]
+    };
     buf.extend(std::iter::repeat(fill).take(n));
     true
 }
@@ -325,7 +365,12 @@ mod tests {
             for _ in 0..200 {
                 let mut buf = vec![0x41u8; 60];
                 apply(*op, &mut buf, &mut r, 64);
-                assert!(buf.len() <= 64, "{} produced {} bytes", op.as_str(), buf.len());
+                assert!(
+                    buf.len() <= 64,
+                    "{} produced {} bytes",
+                    op.as_str(),
+                    buf.len()
+                );
             }
         }
     }
@@ -423,7 +468,10 @@ mod tests {
                 break;
             }
         }
-        assert!(saw_increase && saw_decrease, "arithmetic only moved one way");
+        assert!(
+            saw_increase && saw_decrease,
+            "arithmetic only moved one way"
+        );
     }
 
     #[test]
@@ -472,7 +520,10 @@ mod tests {
             total += havoc(&mut buf, &mut r, 256, 5);
         }
         // With stacking up to 2^5, 200 rounds must average well above one.
-        assert!(total > 200, "havoc applied only {total} operators over 200 rounds");
+        assert!(
+            total > 200,
+            "havoc applied only {total} operators over 200 rounds"
+        );
     }
 
     #[test]
@@ -498,7 +549,10 @@ mod tests {
                 nonempty += 1;
             }
         }
-        assert!(nonempty > 150, "only {nonempty}/200 mutations kept any bytes");
+        assert!(
+            nonempty > 150,
+            "only {nonempty}/200 mutations kept any bytes"
+        );
     }
 
     #[test]

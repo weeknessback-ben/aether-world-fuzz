@@ -148,9 +148,9 @@ impl CoverageTracker {
     pub fn restore(&mut self, seen: &[u8; MAP_SIZE], guard_count: Option<u32>) {
         self.seen.copy_from_slice(seen);
         self.total_edges = 0;
-        for i in 0..MAP_SIZE {
-            self.virgin[i] = !seen[i];
-            if seen[i] != 0 {
+        for (virgin, &s) in self.virgin.iter_mut().zip(seen.iter()) {
+            *virgin = !s;
+            if s != 0 {
                 self.total_edges += 1;
             }
         }
@@ -229,7 +229,10 @@ mod tests {
         assert_eq!(g.new_edges, 0);
         assert_eq!(g.new_buckets, 0);
         assert_eq!(g.touched, 2, "touched still counts the slots");
-        assert!(!g.is_novel(), "identical coverage must not look like progress");
+        assert!(
+            !g.is_novel(),
+            "identical coverage must not look like progress"
+        );
     }
 
     #[test]
@@ -243,8 +246,18 @@ mod tests {
         assert!(g.is_novel());
         assert_eq!(t.total_edges(), 1, "the slot was already counted");
         assert!(
-            CoverageGain { new_edges: 1, new_buckets: 0, touched: 1 }.score()
-                > CoverageGain { new_edges: 0, new_buckets: 1, touched: 1 }.score()
+            CoverageGain {
+                new_edges: 1,
+                new_buckets: 0,
+                touched: 1
+            }
+            .score()
+                > CoverageGain {
+                    new_edges: 0,
+                    new_buckets: 1,
+                    touched: 1
+                }
+                .score()
         );
     }
 
@@ -320,7 +333,10 @@ mod tests {
         let t = CoverageTracker::new();
         let s = CoverageSummary::from(&t);
         assert_eq!(s.total_edges, 0);
-        assert_eq!(s.guard_count, None, "no guard count is not a guard count of zero");
+        assert_eq!(
+            s.guard_count, None,
+            "no guard count is not a guard count of zero"
+        );
         assert_eq!(s.saturation, None);
     }
 }

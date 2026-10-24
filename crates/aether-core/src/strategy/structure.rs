@@ -32,7 +32,9 @@ pub enum FieldKind {
     /// A byte that selects an interpretation.
     Type,
     /// A length describing the payload that follows it.
-    Length { describes: usize },
+    Length {
+        describes: usize,
+    },
     Payload,
 }
 
@@ -49,7 +51,9 @@ pub struct Layout {
 
 impl Layout {
     pub fn length_fields(&self) -> impl Iterator<Item = &Field> {
-        self.fields.iter().filter(|f| matches!(f.kind, FieldKind::Length { .. }))
+        self.fields
+            .iter()
+            .filter(|f| matches!(f.kind, FieldKind::Length { .. }))
     }
 }
 
@@ -71,7 +75,11 @@ pub fn infer_tlv_layout(input: &[u8], header_len: usize, record_header_len: usiz
         return layout;
     }
     if header_len > 0 {
-        layout.fields.push(Field { offset: 0, len: header_len, kind: FieldKind::Header });
+        layout.fields.push(Field {
+            offset: 0,
+            len: header_len,
+            kind: FieldKind::Header,
+        });
     }
 
     let mut off = header_len;
@@ -94,13 +102,19 @@ pub fn infer_tlv_layout(input: &[u8], header_len: usize, record_header_len: usiz
                 kind: FieldKind::Type,
             });
         }
-        layout
-            .fields
-            .push(Field { offset: len_off, len: 1, kind: FieldKind::Length { describes: declared } });
+        layout.fields.push(Field {
+            offset: len_off,
+            len: 1,
+            kind: FieldKind::Length {
+                describes: declared,
+            },
+        });
         if declared > 0 {
-            layout
-                .fields
-                .push(Field { offset: payload_off, len: declared, kind: FieldKind::Payload });
+            layout.fields.push(Field {
+                offset: payload_off,
+                len: declared,
+                kind: FieldKind::Payload,
+            });
         }
         off = payload_off + declared;
         consumed = off;
@@ -171,17 +185,25 @@ impl StructureAware {
             return None;
         }
         let f = lengths[rng.below(lengths.len())];
-        let FieldKind::Length { describes } = f.kind else { return None };
+        let FieldKind::Length { describes } = f.kind else {
+            return None;
+        };
         let payload_off = f.offset + 1;
         if payload_off + describes > input.len() {
             return None;
         }
 
         // A new size that still fits in the single length byte.
-        let new_size = rng.between(0, 255).min(max_len.saturating_sub(input.len() - describes));
+        let new_size = rng
+            .between(0, 255)
+            .min(max_len.saturating_sub(input.len() - describes));
         let mut out = Vec::with_capacity(input.len() + new_size);
         out.extend_from_slice(&input[..payload_off]);
-        let fill = if describes > 0 { input[payload_off] } else { 0x41 };
+        let fill = if describes > 0 {
+            input[payload_off]
+        } else {
+            0x41
+        };
         out.extend(std::iter::repeat(fill).take(new_size));
         out.extend_from_slice(&input[payload_off + describes..]);
         // Repair the length so the record remains well-formed: this is the
@@ -260,8 +282,11 @@ impl StructureAware {
         rng: &mut Rng,
         max_len: usize,
     ) -> Option<Vec<u8>> {
-        let types: Vec<&Field> =
-            layout.fields.iter().filter(|f| f.kind == FieldKind::Type).collect();
+        let types: Vec<&Field> = layout
+            .fields
+            .iter()
+            .filter(|f| f.kind == FieldKind::Type)
+            .collect();
         if types.is_empty() {
             return None;
         }
@@ -306,7 +331,9 @@ impl Strategy for StructureAware {
     fn initialize(&mut self, ctx: &StrategyContext<'_>) -> Result<()> {
         self.max_len = ctx.max_input_bytes;
         self.header_len = ctx.param_u64("structure_header_len", 4).min(64) as usize;
-        self.min_confidence = ctx.param_f64("structure_min_confidence", 0.6).clamp(0.0, 1.0);
+        self.min_confidence = ctx
+            .param_f64("structure_min_confidence", 0.6)
+            .clamp(0.0, 1.0);
         Ok(())
     }
 
@@ -333,7 +360,10 @@ impl Strategy for StructureAware {
                     Self::resize_payload(&base.bytes, &layout, rng, self.max_len),
                     "resize-payload",
                 ),
-                1 => (Self::corrupt_length(&base.bytes, &layout, rng), "corrupt-length"),
+                1 => (
+                    Self::corrupt_length(&base.bytes, &layout, rng),
+                    "corrupt-length",
+                ),
                 2 => (
                     Self::mutate_payload(&base.bytes, &layout, rng, self.max_len),
                     "mutate-payload",
@@ -484,7 +514,10 @@ mod tests {
                 }
             }
         }
-        assert!(saw_inconsistent, "corrupt_length never produced an inconsistency");
+        assert!(
+            saw_inconsistent,
+            "corrupt_length never produced an inconsistency"
+        );
     }
 
     #[test]
@@ -495,7 +528,11 @@ mod tests {
         let mut checked = 0;
         for _ in 0..200 {
             if let Some(out) = StructureAware::mutate_payload(&input, &layout, &mut rng, 4096) {
-                assert_eq!(out.len(), input.len(), "payload mutation changed the length");
+                assert_eq!(
+                    out.len(),
+                    input.len(),
+                    "payload mutation changed the length"
+                );
                 assert!(out.starts_with(b"TLV1"));
                 let re = infer_best_layout(&out, 4);
                 assert!(re.confidence > 0.95, "structure broken: {:?}", out);
@@ -515,7 +552,11 @@ mod tests {
             if let Some(out) = StructureAware::duplicate_record(&input, &layout, &mut rng, 4096) {
                 assert!(out.len() > input.len());
                 let re = infer_best_layout(&out, 4);
-                assert!(re.confidence > 0.95, "duplication broke the stream: {:?}", out);
+                assert!(
+                    re.confidence > 0.95,
+                    "duplication broke the stream: {:?}",
+                    out
+                );
                 checked += 1;
             }
         }
@@ -532,7 +573,11 @@ mod tests {
         let mut s = StructureAware::default();
         s.initialize(&c).unwrap();
         let mut rng = Rng::from_seed(6);
-        let b = vec![Base { id: crate::ids::InputId::new(), bytes: tlv(), cmp_entries: vec![] }];
+        let b = vec![Base {
+            id: crate::ids::InputId::new(),
+            bytes: tlv(),
+            cmp_entries: vec![],
+        }];
         for cand in s.propose(100, &b, &mut rng) {
             assert!(cand.bytes.len() <= 24, "got {} bytes", cand.bytes.len());
         }
@@ -543,15 +588,27 @@ mod tests {
         let params = BTreeMap::new();
         let mut s = built(&params);
         let mut rng = Rng::from_seed(7);
-        let b = vec![Base { id: crate::ids::InputId::new(), bytes: tlv(), cmp_entries: vec![] }];
+        let b = vec![Base {
+            id: crate::ids::InputId::new(),
+            bytes: tlv(),
+            cmp_entries: vec![],
+        }];
         let mut notes = std::collections::HashSet::new();
         for _ in 0..40 {
             for c in s.propose(32, &b, &mut rng) {
                 notes.insert(c.note);
             }
         }
-        for want in ["resize-payload", "corrupt-length", "mutate-payload", "duplicate-record"] {
-            assert!(notes.contains(want), "{want} never produced a candidate: {notes:?}");
+        for want in [
+            "resize-payload",
+            "corrupt-length",
+            "mutate-payload",
+            "duplicate-record",
+        ] {
+            assert!(
+                notes.contains(want),
+                "{want} never produced a candidate: {notes:?}"
+            );
         }
     }
 
@@ -566,7 +623,10 @@ mod tests {
         let run = || {
             let mut s = built(&params);
             let mut rng = Rng::from_seed(321);
-            s.propose(24, &b, &mut rng).into_iter().map(|c| c.bytes).collect::<Vec<_>>()
+            s.propose(24, &b, &mut rng)
+                .into_iter()
+                .map(|c| c.bytes)
+                .collect::<Vec<_>>()
         };
         assert_eq!(run(), run());
     }

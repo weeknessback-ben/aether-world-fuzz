@@ -165,8 +165,10 @@ pub fn score(inputs: &ScoreInputs, norms: &ScoreNorms, weights: &CorpusWeights) 
     // little. Decays hyperbolically, so the first few siblings matter most.
     let redundancy = 1.0 / (1.0 + inputs.signature_siblings as f64);
 
-    let state_transitions =
-        ratio(inputs.state_transitions as f64, norms.max_state_transitions as f64);
+    let state_transitions = ratio(
+        inputs.state_transitions as f64,
+        norms.max_state_transitions as f64,
+    );
 
     let terms = [
         (weights.coverage, coverage),
@@ -279,8 +281,22 @@ mod tests {
     fn more_coverage_scores_higher() {
         let n = norms();
         let w = CorpusWeights::default();
-        let low = score(&ScoreInputs { new_edges: 1, ..Default::default() }, &n, &w);
-        let high = score(&ScoreInputs { new_edges: 80, ..Default::default() }, &n, &w);
+        let low = score(
+            &ScoreInputs {
+                new_edges: 1,
+                ..Default::default()
+            },
+            &n,
+            &w,
+        );
+        let high = score(
+            &ScoreInputs {
+                new_edges: 80,
+                ..Default::default()
+            },
+            &n,
+            &w,
+        );
         assert!(high.total > low.total, "{} vs {}", high.total, low.total);
         assert!(high.coverage > low.coverage);
     }
@@ -290,17 +306,28 @@ mod tests {
         let n = norms();
         let w = CorpusWeights::default();
         let fast = score(
-            &ScoreInputs { new_edges: 10, exec_micros: 100, ..Default::default() },
+            &ScoreInputs {
+                new_edges: 10,
+                exec_micros: 100,
+                ..Default::default()
+            },
             &n,
             &w,
         );
         let slow = score(
-            &ScoreInputs { new_edges: 10, exec_micros: 10_000, ..Default::default() },
+            &ScoreInputs {
+                new_edges: 10,
+                exec_micros: 10_000,
+                ..Default::default()
+            },
             &n,
             &w,
         );
         assert!(fast.total > slow.total);
-        assert!(fast.cost > slow.cost, "cost must be inverted: cheap is good");
+        assert!(
+            fast.cost > slow.cost,
+            "cost must be inverted: cheap is good"
+        );
     }
 
     #[test]
@@ -308,12 +335,20 @@ mod tests {
         let n = norms();
         let w = CorpusWeights::default();
         let unique = score(
-            &ScoreInputs { new_edges: 10, signature_siblings: 0, ..Default::default() },
+            &ScoreInputs {
+                new_edges: 10,
+                signature_siblings: 0,
+                ..Default::default()
+            },
             &n,
             &w,
         );
         let common = score(
-            &ScoreInputs { new_edges: 10, signature_siblings: 30, ..Default::default() },
+            &ScoreInputs {
+                new_edges: 10,
+                signature_siblings: 30,
+                ..Default::default()
+            },
             &n,
             &w,
         );
@@ -328,9 +363,20 @@ mod tests {
         // corpus ever trying it.
         let n = norms();
         let w = CorpusWeights::default();
-        let untried = score(&ScoreInputs { total_children: 0, ..Default::default() }, &n, &w);
+        let untried = score(
+            &ScoreInputs {
+                total_children: 0,
+                ..Default::default()
+            },
+            &n,
+            &w,
+        );
         let barren = score(
-            &ScoreInputs { total_children: 40, productive_children: 0, ..Default::default() },
+            &ScoreInputs {
+                total_children: 40,
+                productive_children: 0,
+                ..Default::default()
+            },
             &n,
             &w,
         );
@@ -343,12 +389,20 @@ mod tests {
         let n = norms();
         let w = CorpusWeights::default();
         let good = score(
-            &ScoreInputs { total_children: 10, productive_children: 8, ..Default::default() },
+            &ScoreInputs {
+                total_children: 10,
+                productive_children: 8,
+                ..Default::default()
+            },
             &n,
             &w,
         );
         let bad = score(
-            &ScoreInputs { total_children: 10, productive_children: 0, ..Default::default() },
+            &ScoreInputs {
+                total_children: 10,
+                productive_children: 0,
+                ..Default::default()
+            },
             &n,
             &w,
         );
@@ -369,13 +423,18 @@ mod tests {
             redundancy: 0.0,
             state_transitions: 0.0,
         };
-        let cheap_useless =
-            ScoreInputs { new_edges: 0, exec_micros: 10, ..Default::default() };
-        let dear_useful =
-            ScoreInputs { new_edges: 100, exec_micros: 10_000, ..Default::default() };
+        let cheap_useless = ScoreInputs {
+            new_edges: 0,
+            exec_micros: 10,
+            ..Default::default()
+        };
+        let dear_useful = ScoreInputs {
+            new_edges: 100,
+            exec_micros: 10_000,
+            ..Default::default()
+        };
         assert!(
-            score(&cheap_useless, &n, &cost_only).total
-                > score(&dear_useful, &n, &cost_only).total
+            score(&cheap_useless, &n, &cost_only).total > score(&dear_useful, &n, &cost_only).total
         );
         // And with coverage weighted alone, the ordering inverts.
         let cov_only = CorpusWeights {
@@ -388,8 +447,7 @@ mod tests {
             state_transitions: 0.0,
         };
         assert!(
-            score(&dear_useful, &n, &cov_only).total
-                > score(&cheap_useless, &n, &cov_only).total
+            score(&dear_useful, &n, &cov_only).total > score(&cheap_useless, &n, &cov_only).total
         );
     }
 
@@ -397,21 +455,43 @@ mod tests {
     fn empty_norms_do_not_produce_nan() {
         // At the very start of a campaign nothing has been measured yet.
         let n = ScoreNorms::default();
-        let r = score(&ScoreInputs { new_edges: 5, ..Default::default() }, &n, &CorpusWeights::default());
+        let r = score(
+            &ScoreInputs {
+                new_edges: 5,
+                ..Default::default()
+            },
+            &n,
+            &CorpusWeights::default(),
+        );
         assert!(r.total.is_finite(), "got {}", r.total);
-        assert_eq!(r.coverage, 0.0, "no maximum known yet means no relative coverage");
+        assert_eq!(
+            r.coverage, 0.0,
+            "no maximum known yet means no relative coverage"
+        );
     }
 
     #[test]
     fn norms_track_maxima_and_report_movement() {
         let mut n = ScoreNorms::default();
-        assert!(n.observe(&ScoreInputs { new_edges: 5, exec_micros: 100, ..Default::default() }));
-        assert!(n.observe(&ScoreInputs { new_edges: 50, exec_micros: 10, ..Default::default() }));
+        assert!(n.observe(&ScoreInputs {
+            new_edges: 5,
+            exec_micros: 100,
+            ..Default::default()
+        }));
+        assert!(n.observe(&ScoreInputs {
+            new_edges: 50,
+            exec_micros: 10,
+            ..Default::default()
+        }));
         assert_eq!(n.max_new_edges, 50);
         assert_eq!(n.max_exec_micros, 100);
         assert_eq!(n.corpus_size, 2);
         // Nothing exceeds a current maximum: no rescore needed.
-        assert!(!n.observe(&ScoreInputs { new_edges: 1, exec_micros: 1, ..Default::default() }));
+        assert!(!n.observe(&ScoreInputs {
+            new_edges: 1,
+            exec_micros: 1,
+            ..Default::default()
+        }));
         assert_eq!(n.corpus_size, 3);
     }
 }

@@ -1,0 +1,59 @@
+# A protocol where the order of operations matters.
+#
+# fixtures/stateful_service.c plants a use-after-free reachable only by
+# AUTH -> OPEN -> CLOSE -> COMMIT in that order. No amount of mutating a single
+# input finds it; the sequence strategy generates orderings and learns which
+# transitions the target accepts from the status codes it replies with.
+schema_version = 1
+
+[target]
+name = "stateful_service"
+kind = "stateful-stdio"
+binary = "build/stateful_service"
+input_mode = "stdin"
+timeout_ms = 2000
+memory_limit_mb = 256
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 900
+workers = 1
+seed = 20260124
+max_input_bytes = 16384
+
+[strategies]
+enabled = ["stateful-sequence", "dictionary", "havoc"]
+# Protocol tokens make good arguments. A valid credential in the dictionary is
+# often the difference between reaching the state machine and not.
+dictionary = ["letmein", "AUTH", "OPEN", "WRITE", "CLOSE", "COMMIT", "QUIT"]
+
+[strategies.params]
+sequence_min_steps = 3
+sequence_max_steps = 12
+sequence_commands = [
+  "AUTH {arg}",
+  "OPEN {arg}",
+  "WRITE {arg}",
+  "CLOSE",
+  "COMMIT",
+  "QUIT",
+]
+
+[feedback]
+# state-transition turns pairs of consecutive status codes into a novelty
+# signal, which is what lets the campaign tell "got further into the protocol"
+# from "was rejected again".
+providers = ["edge-coverage", "exit-class", "state-transition", "cmplog", "sanitizer"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 48
+
+[reproduction]
+attempts = 8
+required_successes = 4
+minimize = true
+
+[output]
+dir = ".aether"
+report_formats = ["json", "markdown"]

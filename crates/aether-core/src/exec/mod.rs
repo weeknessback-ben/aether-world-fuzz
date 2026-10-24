@@ -53,7 +53,10 @@ impl ExitClass {
     /// Whether this outcome is worth offering to the evidence engine. Note
     /// that "interesting" is not "a bug": the evidence engine decides that.
     pub fn is_candidate_failure(&self) -> bool {
-        matches!(self, ExitClass::Crash | ExitClass::SanitizerFault | ExitClass::Timeout)
+        matches!(
+            self,
+            ExitClass::Crash | ExitClass::SanitizerFault | ExitClass::Timeout
+        )
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -130,8 +133,16 @@ pub fn classify(
 
     let exited = libc::WIFEXITED(wait_status);
     let signalled = libc::WIFSIGNALED(wait_status);
-    let code = if exited { Some(libc::WEXITSTATUS(wait_status)) } else { None };
-    let sig = if signalled { Some(libc::WTERMSIG(wait_status)) } else { None };
+    let code = if exited {
+        Some(libc::WEXITSTATUS(wait_status))
+    } else {
+        None
+    };
+    let sig = if signalled {
+        Some(libc::WTERMSIG(wait_status))
+    } else {
+        None
+    };
 
     // A sanitizer is only believed when the process actually died. A target
     // that printed a report-shaped banner and exited cleanly did not crash;
@@ -149,8 +160,13 @@ pub fn classify(
         // SIGABRT from a failed assertion, SIGSEGV, SIGBUS, SIGFPE and SIGILL
         // are faults. SIGKILL and SIGTERM are not: they came from outside.
         match s {
-            libc::SIGABRT | libc::SIGSEGV | libc::SIGBUS | libc::SIGFPE | libc::SIGILL
-            | libc::SIGSYS | libc::SIGTRAP => ExitClass::Crash,
+            libc::SIGABRT
+            | libc::SIGSEGV
+            | libc::SIGBUS
+            | libc::SIGFPE
+            | libc::SIGILL
+            | libc::SIGSYS
+            | libc::SIGTRAP => ExitClass::Crash,
             libc::SIGKILL | libc::SIGTERM | libc::SIGINT | libc::SIGHUP => ExitClass::Killed,
             _ => ExitClass::Crash,
         }
@@ -227,7 +243,13 @@ mod tests {
 
     #[test]
     fn fault_signals_are_crashes() {
-        for sig in [libc::SIGSEGV, libc::SIGABRT, libc::SIGFPE, libc::SIGILL, libc::SIGBUS] {
+        for sig in [
+            libc::SIGSEGV,
+            libc::SIGABRT,
+            libc::SIGFPE,
+            libc::SIGILL,
+            libc::SIGBUS,
+        ] {
             let (c, _, s, _) = classify(signalled(sig), false, false, b"");
             assert_eq!(c, ExitClass::Crash, "signal {sig}");
             assert_eq!(s, Some(sig));
@@ -239,7 +261,11 @@ mod tests {
     fn externally_sent_signals_are_not_crashes() {
         for sig in [libc::SIGKILL, libc::SIGTERM, libc::SIGINT] {
             let (c, _, _, _) = classify(signalled(sig), false, false, b"");
-            assert_eq!(c, ExitClass::Killed, "signal {sig} must not read as a crash");
+            assert_eq!(
+                c,
+                ExitClass::Killed,
+                "signal {sig} must not read as a crash"
+            );
             assert!(!c.is_candidate_failure());
         }
     }
@@ -270,7 +296,10 @@ mod tests {
         let err = b"==1234==ERROR: AddressSanitizer: heap-use-after-free on address 0x0\n";
         let (c, _, _, san) = classify(exited(0), false, false, err);
         assert_eq!(c, ExitClass::Ok);
-        assert!(san.is_none(), "a clean exit must not yield a sanitizer finding");
+        assert!(
+            san.is_none(),
+            "a clean exit must not yield a sanitizer finding"
+        );
     }
 
     #[test]

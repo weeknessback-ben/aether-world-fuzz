@@ -100,8 +100,9 @@ impl ProcessLimits {
         }
         let nproc_ok = self.max_processes == 0 || can_set(libc::RLIMIT_NPROC, self.max_processes);
         if !nproc_ok {
-            unenforced
-                .push("RLIMIT_NPROC could not be set; the target's process count is unbounded".into());
+            unenforced.push(
+                "RLIMIT_NPROC could not be set; the target's process count is unbounded".into(),
+            );
         }
         let core_ok = can_set(libc::RLIMIT_CORE, 0);
         if !core_ok {
@@ -144,7 +145,10 @@ impl ProcessLimits {
 }
 
 unsafe fn set_limit(resource: libc::__rlimit_resource_t, value: u64) {
-    let rl = libc::rlimit { rlim_cur: value, rlim_max: value };
+    let rl = libc::rlimit {
+        rlim_cur: value,
+        rlim_max: value,
+    };
     // A failure here cannot be reported from a post-fork child; `probe()` is
     // what tells the operator which limits this host will honour.
     libc::setrlimit(resource, &rl);
@@ -153,7 +157,10 @@ unsafe fn set_limit(resource: libc::__rlimit_resource_t, value: u64) {
 /// Would lowering this limit to `value` succeed? Checks against the current
 /// hard limit instead of actually changing anything.
 fn can_set(resource: libc::__rlimit_resource_t, value: u64) -> bool {
-    let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    let mut rl = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
     let rc = unsafe { libc::getrlimit(resource, &mut rl) };
     if rc != 0 {
         return false;
@@ -184,14 +191,21 @@ mod tests {
         // megabytes stops it starting at all, which is why the limit is
         // dropped and the sanitizer's own RSS cap takes over.
         let l = ProcessLimits::for_sanitizer_build(256);
-        assert_eq!(l.memory_bytes, 0, "RLIMIT_AS must not be applied to a sanitizer build");
+        assert_eq!(
+            l.memory_bytes, 0,
+            "RLIMIT_AS must not be applied to a sanitizer build"
+        );
         assert!(l.file_size_bytes > 0, "other limits still apply");
         assert!(l.max_processes > 0);
     }
 
     #[test]
     fn zero_memory_limit_means_no_limit_claimed() {
-        let l = ProcessLimits { memory_bytes: 0, file_size_bytes: 0, max_processes: 0 };
+        let l = ProcessLimits {
+            memory_bytes: 0,
+            file_size_bytes: 0,
+            max_processes: 0,
+        };
         let r = l.probe();
         assert!(!r.memory_limit_enforced);
         assert!(!r.file_size_limited);

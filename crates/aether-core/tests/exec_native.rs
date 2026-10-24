@@ -14,19 +14,31 @@ use std::time::Duration;
 
 use aether_core::config::{Config, InputMode, Instrumentation};
 use aether_core::exec::native::{NativeExecutor, TargetSpec};
-use aether_core::exec::{ExitClass, Executor};
+use aether_core::exec::{Executor, ExitClass};
 use aether_core::scope::ScopePolicy;
 use common::{config_toml_for, config_toml_uninstrumented, fixture, Build, Scratch};
 
 /// Build an executor for a fixture, with the fork server as configured.
-fn executor_for(stem: &str, build: Build, fork_server: bool, tag: &str) -> (NativeExecutor, Scratch) {
+fn executor_for(
+    stem: &str,
+    build: Build,
+    fork_server: bool,
+    tag: &str,
+) -> (NativeExecutor, Scratch) {
     let bin = fixture(stem, build);
-    let extra = if fork_server { "" } else { "\nuse_fork_server = false" };
+    let extra = if fork_server {
+        ""
+    } else {
+        "\nuse_fork_server = false"
+    };
     // use_fork_server lives under [target]; splice it in there.
     let toml = if fork_server {
         config_toml_for(&bin, "")
     } else {
-        config_toml_for(&bin, "").replace("timeout_ms = 2000", "timeout_ms = 2000\nuse_fork_server = false")
+        config_toml_for(&bin, "").replace(
+            "timeout_ms = 2000",
+            "timeout_ms = 2000\nuse_fork_server = false",
+        )
     };
     let _ = extra;
     let cfg = Config::from_toml_str(&toml).expect("fixture config should be valid");
@@ -60,7 +72,9 @@ fn coverage_responds_to_input_quality() {
     let mut counts = Vec::new();
     for prefix in ["", "A", "AE", "AET", "AETH", "AETHE", "AETHER"] {
         let out = exec.run(prefix.as_bytes()).expect("run");
-        let edges = out.edge_count().expect("instrumented target must report coverage");
+        let edges = out
+            .edge_count()
+            .expect("instrumented target must report coverage");
         counts.push(edges);
     }
 
@@ -81,7 +95,10 @@ fn coverage_is_per_run_not_cumulative() {
     let (mut exec, _s) = executor_for("coverage_ladder", Build::InstrumentedO0, true, "cov-reset");
     let good = exec.run(b"AETHER").unwrap().edge_count().unwrap();
     let bad = exec.run(b"zzzzzz").unwrap().edge_count().unwrap();
-    assert!(bad < good, "coverage leaked between runs: good={good} bad={bad}");
+    assert!(
+        bad < good,
+        "coverage leaked between runs: good={good} bad={bad}"
+    );
 }
 
 #[test]
@@ -113,9 +130,14 @@ fn comparison_log_advances_with_the_input() {
     assert!(stage1.cmp_entries.iter().any(|e| e.v0 == 0xDEAD_BEEF));
 
     // Satisfy the magic; the next comparison is the 2-byte version 0x0203.
-    let stage2 = exec.run(&[0xEF, 0xBE, 0xAD, 0xDE, b'A', b'A', b'A', b'A']).unwrap();
+    let stage2 = exec
+        .run(&[0xEF, 0xBE, 0xAD, 0xDE, b'A', b'A', b'A', b'A'])
+        .unwrap();
     assert!(
-        stage2.cmp_entries.iter().any(|e| e.is_const && e.v0 == 0x0203 && e.width == 2),
+        stage2
+            .cmp_entries
+            .iter()
+            .any(|e| e.is_const && e.v0 == 0x0203 && e.width == 2),
         "expected the version constant after the magic matched: {:?}",
         stage2.cmp_entries
     );
@@ -124,7 +146,9 @@ fn comparison_log_advances_with_the_input() {
 #[test]
 fn crash_is_detected_with_the_right_signal() {
     let (mut exec, _s) = executor_for("crash_magic", Build::Instrumented, true, "crash");
-    let out = exec.run(&[0xEF, 0xBE, 0xAD, 0xDE, 0x03, 0x02, b'Z', b'!']).expect("run");
+    let out = exec
+        .run(&[0xEF, 0xBE, 0xAD, 0xDE, 0x03, 0x02, b'Z', b'!'])
+        .expect("run");
     assert_eq!(out.class, ExitClass::Crash, "stderr: {}", out.stderr_str());
     assert_eq!(out.signal, Some(libc::SIGABRT));
     assert!(out.class.is_candidate_failure());
@@ -143,7 +167,12 @@ fn a_clean_target_never_reports_a_failure() {
     ];
     for input in inputs {
         let out = exec.run(&input).expect("run");
-        assert_eq!(out.class, ExitClass::Ok, "input len {} misclassified", input.len());
+        assert_eq!(
+            out.class,
+            ExitClass::Ok,
+            "input len {} misclassified",
+            input.len()
+        );
         assert!(!out.class.is_candidate_failure());
         assert!(out.sanitizer.is_none());
     }
@@ -164,7 +193,10 @@ fn deadline_is_enforced_and_the_target_is_reaped() {
     let elapsed = start.elapsed();
 
     assert_eq!(out.class, ExitClass::Timeout);
-    assert!(out.class.is_candidate_failure(), "a hang is worth investigating");
+    assert!(
+        out.class.is_candidate_failure(),
+        "a hang is worth investigating"
+    );
     assert!(
         elapsed < Duration::from_secs(3),
         "timeout took {elapsed:?}; the deadline should have fired at 300ms"
@@ -187,8 +219,15 @@ fn output_capture_is_bounded() {
     let mut exec = NativeExecutor::new(spec, &scratch.path).unwrap();
 
     let out = exec.run(b"x").expect("run");
-    assert!(out.stdout.len() <= limit, "captured {} bytes", out.stdout.len());
-    assert!(out.stdout_truncated, "truncation must be reported, not silent");
+    assert!(
+        out.stdout.len() <= limit,
+        "captured {} bytes",
+        out.stdout.len()
+    );
+    assert!(
+        out.stdout_truncated,
+        "truncation must be reported, not silent"
+    );
 }
 
 #[test]
@@ -252,9 +291,14 @@ fn exec_fallback_path_works_without_a_fork_server() {
         .any(|l| l.contains("not instrumented")));
 
     // Still classifies correctly without any coverage.
-    let crash = exec.run(&[0xEF, 0xBE, 0xAD, 0xDE, 0x03, 0x02, b'Z', b'!']).unwrap();
+    let crash = exec
+        .run(&[0xEF, 0xBE, 0xAD, 0xDE, 0x03, 0x02, b'Z', b'!'])
+        .unwrap();
     assert_eq!(crash.class, ExitClass::Crash);
-    assert!(crash.coverage.is_none(), "uninstrumented target must report no coverage, not zeroes");
+    assert!(
+        crash.coverage.is_none(),
+        "uninstrumented target must report no coverage, not zeroes"
+    );
 
     let ok = exec.run(b"AAAAAAAA").unwrap();
     assert_eq!(ok.class, ExitClass::NonZeroExit);
@@ -275,7 +319,12 @@ fn input_is_passed_as_data_never_through_a_shell() {
     ];
     for input in nasty {
         let out = exec.run(input).expect("run");
-        assert_eq!(out.class, ExitClass::Ok, "input {:?}", String::from_utf8_lossy(input));
+        assert_eq!(
+            out.class,
+            ExitClass::Ok,
+            "input {:?}",
+            String::from_utf8_lossy(input)
+        );
     }
     assert!(
         !std::path::Path::new("/tmp/aether-should-not-exist").exists(),
@@ -299,7 +348,8 @@ fn executor_survives_many_runs_without_leaking_children() {
     let (mut exec, _s) = executor_for("coverage_ladder", Build::Instrumented, true, "many");
     for i in 0..400u32 {
         let input = i.to_le_bytes();
-        exec.run(&input).unwrap_or_else(|e| panic!("run {i} failed: {e}"));
+        exec.run(&input)
+            .unwrap_or_else(|e| panic!("run {i} failed: {e}"));
     }
     assert_eq!(exec.exec_count(), 400);
 }
@@ -329,12 +379,20 @@ fn file_arg_mode_delivers_input_through_the_placeholder() {
 
     let scratch = Scratch::new("file-arg");
     let spec = TargetSpec::from_config(&cfg.target, &ScopePolicy::default(), 4096).unwrap();
-    assert!(!spec.use_fork_server, "file-arg mode cannot use the fork server");
+    assert!(
+        !spec.use_fork_server,
+        "file-arg mode cannot use the fork server"
+    );
     let mut exec = NativeExecutor::new(spec, &scratch.path).unwrap();
 
     // The crash input, delivered as a file path argument.
     let crash = exec.run(b"BOOM").expect("run");
-    assert_eq!(crash.class, ExitClass::Crash, "stderr: {}", crash.stderr_str());
+    assert_eq!(
+        crash.class,
+        ExitClass::Crash,
+        "stderr: {}",
+        crash.stderr_str()
+    );
 
     // Non-crashing inputs still classify by exit code, which proves the file
     // really was re-written between runs rather than left stale.

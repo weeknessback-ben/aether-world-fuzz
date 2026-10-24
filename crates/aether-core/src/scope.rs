@@ -130,7 +130,11 @@ impl ScopePolicy {
                         format!(
                             "host is not in scope.authorized_hosts ({} entr{} listed)",
                             self.authorized_hosts.len(),
-                            if self.authorized_hosts.len() == 1 { "y" } else { "ies" }
+                            if self.authorized_hosts.len() == 1 {
+                                "y"
+                            } else {
+                                "ies"
+                            }
                         ),
                     ));
                 }
@@ -168,13 +172,18 @@ impl ScopePolicy {
         }
         for entry in &self.authorized_hosts {
             if entry.trim().is_empty() {
-                return Err(Error::config("scope", "authorized_hosts contains an empty entry"));
+                return Err(Error::config(
+                    "scope",
+                    "authorized_hosts contains an empty entry",
+                ));
             }
             if entry.contains('*') {
                 return Err(Error::config(
                     "scope",
-                    format!("authorized_hosts entry {entry:?} contains a wildcard; \
-                             list each host explicitly"),
+                    format!(
+                        "authorized_hosts entry {entry:?} contains a wildcard; \
+                             list each host explicitly"
+                    ),
                 ));
             }
         }
@@ -199,22 +208,34 @@ mod tests {
     use super::*;
 
     fn net(host: &str, port: u16) -> ScopeRequest {
-        ScopeRequest::Network { host: host.into(), port }
+        ScopeRequest::Network {
+            host: host.into(),
+            port,
+        }
     }
 
     #[test]
     fn default_policy_allows_local_and_refuses_network() {
         let p = ScopePolicy::default();
-        p.authorize_target(&ScopeRequest::LocalExecution { binary: "/bin/true".into() }).unwrap();
+        p.authorize_target(&ScopeRequest::LocalExecution {
+            binary: "/bin/true".into(),
+        })
+        .unwrap();
         assert!(p.authorize_target(&net("example.com", 80)).is_err());
     }
 
     #[test]
     fn url_alone_is_not_authorization() {
         // allow_network_targets on, but no host list, no note, no rate limit.
-        let p = ScopePolicy { allow_network_targets: true, ..Default::default() };
+        let p = ScopePolicy {
+            allow_network_targets: true,
+            ..Default::default()
+        };
         assert!(p.authorize_target(&net("example.com", 80)).is_err());
-        assert!(p.validate().is_err(), "empty authorized_hosts must fail validation");
+        assert!(
+            p.validate().is_err(),
+            "empty authorized_hosts must fail validation"
+        );
     }
 
     #[test]
@@ -254,11 +275,20 @@ mod tests {
             max_requests_per_second: 5,
             ..Default::default()
         };
-        let no_note = ScopePolicy { authorization_note: None, ..base.clone() };
+        let no_note = ScopePolicy {
+            authorization_note: None,
+            ..base.clone()
+        };
         assert!(no_note.authorize_target(&net("h", 1)).is_err());
-        let blank_note = ScopePolicy { authorization_note: Some("   ".into()), ..base.clone() };
+        let blank_note = ScopePolicy {
+            authorization_note: Some("   ".into()),
+            ..base.clone()
+        };
         assert!(blank_note.authorize_target(&net("h", 1)).is_err());
-        let no_rate = ScopePolicy { max_requests_per_second: 0, ..base.clone() };
+        let no_rate = ScopePolicy {
+            max_requests_per_second: 0,
+            ..base.clone()
+        };
         assert!(no_rate.authorize_target(&net("h", 1)).is_err());
         base.authorize_target(&net("h", 1)).unwrap();
     }
@@ -274,7 +304,9 @@ mod tests {
         };
         p.authorize_target(&net("example.com", 443)).unwrap();
         assert!(p.authorize_target(&net("admin.example.com", 443)).is_err());
-        assert!(p.authorize_target(&net("example.com.evil.net", 443)).is_err());
+        assert!(p
+            .authorize_target(&net("example.com.evil.net", 443))
+            .is_err());
     }
 
     #[test]
@@ -291,9 +323,14 @@ mod tests {
 
     #[test]
     fn local_execution_can_be_disabled() {
-        let p = ScopePolicy { allow_local_execution: false, ..Default::default() };
+        let p = ScopePolicy {
+            allow_local_execution: false,
+            ..Default::default()
+        };
         assert!(p
-            .authorize_target(&ScopeRequest::LocalExecution { binary: "/bin/true".into() })
+            .authorize_target(&ScopeRequest::LocalExecution {
+                binary: "/bin/true".into()
+            })
             .is_err());
     }
 

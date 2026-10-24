@@ -191,7 +191,10 @@ impl ExperimentResults {
                 s.push_str(&format!("{:<28} skipped: {}\n", a.arm, reason));
                 continue;
             }
-            let eps = a.stat(|m| m.executions_per_second).map(|x| x.1).unwrap_or(0.0);
+            let eps = a
+                .stat(|m| m.executions_per_second)
+                .map(|x| x.1)
+                .unwrap_or(0.0);
             let edges = a
                 .stat(|m| m.total_edges as f64)
                 .map(|(lo, med, hi, _)| format!("{lo:.0}/{med:.0}/{hi:.0}"))
@@ -233,18 +236,19 @@ pub fn run_experiment(
     duration_secs: u64,
 ) -> Result<ExperimentResults> {
     let id = experiment.to_ascii_lowercase();
-    let info = EXPERIMENTS
-        .iter()
-        .find(|e| e.id == id)
-        .ok_or_else(|| {
-            Error::config(
-                "experiment",
-                format!(
-                    "unknown experiment {experiment:?}; known: {}",
-                    EXPERIMENTS.iter().map(|e| e.id).collect::<Vec<_>>().join(", ")
-                ),
-            )
-        })?;
+    let info = EXPERIMENTS.iter().find(|e| e.id == id).ok_or_else(|| {
+        Error::config(
+            "experiment",
+            format!(
+                "unknown experiment {experiment:?}; known: {}",
+                EXPERIMENTS
+                    .iter()
+                    .map(|e| e.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+    })?;
 
     if !info.implemented {
         return Err(Error::unsupported_with_remedy(
@@ -263,18 +267,29 @@ pub fn run_experiment(
                 c.strategies.enabled = vec!["havoc".into(), "random-mutation".into()];
             }),
             arm("coverage-guided", "edge coverage drives the corpus", |c| {
-                c.feedback.providers =
-                    vec!["edge-coverage".into(), "exit-class".into(), "sanitizer".into()];
+                c.feedback.providers = vec![
+                    "edge-coverage".into(),
+                    "exit-class".into(),
+                    "sanitizer".into(),
+                ];
                 c.strategies.enabled = vec!["havoc".into(), "random-mutation".into()];
             }),
         ],
         "b" => vec![
-            arm("static-allocation", "equal fixed shares per strategy", |c| {
-                c.intel.scheduler = SchedulerKind::Static;
-            }),
-            arm("adaptive-thompson", "Thompson Sampling on value per compute", |c| {
-                c.intel.scheduler = SchedulerKind::Thompson;
-            }),
+            arm(
+                "static-allocation",
+                "equal fixed shares per strategy",
+                |c| {
+                    c.intel.scheduler = SchedulerKind::Static;
+                },
+            ),
+            arm(
+                "adaptive-thompson",
+                "Thompson Sampling on value per compute",
+                |c| {
+                    c.intel.scheduler = SchedulerKind::Thompson;
+                },
+            ),
         ],
         "c" => vec![
             arm("mutation-only", "byte-level mutation", |c| {
@@ -295,14 +310,18 @@ pub fn run_experiment(
             arm("coverage-only", "edge coverage alone", |c| {
                 c.feedback.providers = vec!["edge-coverage".into()];
             }),
-            arm("coverage-plus-semantic", "coverage with exit-class and transitions", |c| {
-                c.feedback.providers = vec![
-                    "edge-coverage".into(),
-                    "exit-class".into(),
-                    "state-transition".into(),
-                    "sanitizer".into(),
-                ];
-            }),
+            arm(
+                "coverage-plus-semantic",
+                "coverage with exit-class and transitions",
+                |c| {
+                    c.feedback.providers = vec![
+                        "edge-coverage".into(),
+                        "exit-class".into(),
+                        "state-transition".into(),
+                        "sanitizer".into(),
+                    ];
+                },
+            ),
         ],
         "e" => vec![
             arm("blind-mutation", "random byte mutation only", |c| {
@@ -313,7 +332,10 @@ pub fn run_experiment(
             }),
         ],
         other => {
-            return Err(Error::config("experiment", format!("unhandled experiment {other}")))
+            return Err(Error::config(
+                "experiment",
+                format!("unhandled experiment {other}"),
+            ))
         }
     };
 
@@ -394,6 +416,14 @@ fn seed_for(experiment: &str, trial: u32) -> u64 {
     u64::from_le_bytes(b)
 }
 
+/// Microseconds of wall clock per newly reached edge.
+///
+/// `None` when no edge was reached: a rate computed by dividing by zero would
+/// be reported as a measurement, which it is not.
+fn micros_per_edge(duration_ms: u64, total_edges: u32) -> Option<f64> {
+    (total_edges > 0).then(|| (duration_ms as f64 * 1000.0) / total_edges as f64)
+}
+
 fn run_one(cfg: Config, arm: &str, trial: u32) -> Result<TrialMetrics> {
     let seed = cfg.campaign.seed;
     let mut campaign = Campaign::create(cfg, Cancel::new())?;
@@ -408,12 +438,7 @@ fn run_one(cfg: Config, arm: &str, trial: u32) -> Result<TrialMetrics> {
         .filter(|f| f.status.is_confirmed())
         .map(|f| f.created_ms)
         .min();
-    let started = r
-        .findings
-        .items
-        .first()
-        .map(|_| 0u64)
-        .unwrap_or(0);
+    let started = r.findings.items.first().map(|_| 0u64).unwrap_or(0);
     let _ = started;
 
     Ok(TrialMetrics {
@@ -431,10 +456,9 @@ fn run_one(cfg: Config, arm: &str, trial: u32) -> Result<TrialMetrics> {
         findings_intermittent: r.findings.intermittent,
         crashes_observed: r.execution.crashes_observed,
         timeouts_observed: r.execution.timeouts_observed,
-        time_to_first_finding_ms: first_finding.map(|ms| ms.saturating_sub(0)),
+        time_to_first_finding_ms: first_finding,
         // None rather than a division by zero dressed up as a measurement.
-        micros_per_edge: (r.coverage.total_edges > 0)
-            .then(|| (r.duration_ms as f64 * 1000.0) / r.coverage.total_edges as f64),
+        micros_per_edge: micros_per_edge(r.duration_ms, r.coverage.total_edges),
     })
 }
 
@@ -519,7 +543,11 @@ mod tests {
 
     #[test]
     fn every_experiment_is_catalogued_with_an_honest_status() {
-        assert_eq!(EXPERIMENTS.len(), 7, "the specification defines A through G");
+        assert_eq!(
+            EXPERIMENTS.len(),
+            7,
+            "the specification defines A through G"
+        );
         for e in EXPERIMENTS {
             assert!(!e.title.is_empty());
             assert!(!e.description.is_empty());
@@ -627,7 +655,10 @@ mod tests {
         arms[1].skipped = Some("needs a comparison log".into());
         arms[1].metrics.clear();
         let obs = observe("x", &arms);
-        assert!(obs.iter().any(|o| o.contains("could not be run")), "{obs:?}");
+        assert!(
+            obs.iter().any(|o| o.contains("could not be run")),
+            "{obs:?}"
+        );
     }
 
     #[test]
@@ -665,11 +696,11 @@ mod tests {
 
     #[test]
     fn micros_per_edge_is_none_when_no_edge_was_reached() {
-        let m = metrics("a", 0, 0);
-        // Constructed directly in the test; the real path sets None when
-        // total_edges is zero rather than dividing by it.
-        assert!(m.micros_per_edge.is_some(), "test fixture sets a value");
-        let computed: Option<f64> = (0u32 > 0).then(|| 1.0);
-        assert!(computed.is_none(), "zero edges must not yield a rate");
+        assert_eq!(
+            micros_per_edge(1000, 0),
+            None,
+            "zero edges must not yield a rate"
+        );
+        assert_eq!(micros_per_edge(1000, 10), Some(100_000.0));
     }
 }

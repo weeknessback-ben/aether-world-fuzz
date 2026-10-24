@@ -208,7 +208,9 @@ mod tests {
         let cp = checkpoint(&m);
         cp.save(&store).unwrap();
 
-        let back = Checkpoint::load(&store, "cmp-0000000000000001").unwrap().unwrap();
+        let back = Checkpoint::load(&store, "cmp-0000000000000001")
+            .unwrap()
+            .unwrap();
         assert_eq!(back.total_executions, 12_345);
         assert_eq!(back.guard_count, Some(190));
         assert_eq!(back.scheduler["round"], 40);
@@ -239,14 +241,18 @@ mod tests {
             .query_row("SELECT count(*) FROM checkpoints", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "checkpoints must be replaced, not accumulated");
-        let back = Checkpoint::load(&store, "cmp-0000000000000001").unwrap().unwrap();
+        let back = Checkpoint::load(&store, "cmp-0000000000000001")
+            .unwrap()
+            .unwrap();
         assert_eq!(back.total_executions, 99_999);
     }
 
     #[test]
     fn missing_checkpoint_is_none_not_an_error() {
         let store = Store::open_in_memory().unwrap();
-        assert!(Checkpoint::load(&store, "cmp-does-not-exist").unwrap().is_none());
+        assert!(Checkpoint::load(&store, "cmp-does-not-exist")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -267,6 +273,9 @@ mod tests {
 
         let e = Checkpoint::load(&store, "cmp-0000000000000001").unwrap_err();
         assert!(e.to_string().contains("newer AETHER"), "{e}");
-        assert!(e.to_string().contains("fresh campaign"), "should say what to do: {e}");
+        assert!(
+            e.to_string().contains("fresh campaign"),
+            "should say what to do: {e}"
+        );
     }
 }

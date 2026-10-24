@@ -1,0 +1,58 @@
+# A format parser.
+#
+# Mutation alone fares badly here: a parser that rejects malformed input at its
+# first check means almost every random input dies at byte 0. Generation and
+# structure-aware mutation reach the code that matters.
+schema_version = 1
+
+[target]
+name = "toy_parser"
+kind = "executable"
+binary = "build/toy_parser"
+input_mode = "stdin"
+timeout_ms = 1000
+memory_limit_mb = 512
+instrumentation = "aether-native"
+
+[campaign]
+duration_secs = 600
+workers = 1
+seed = 20260124
+max_input_bytes = 32768
+
+[strategies]
+enabled = [
+  "grammar",          # valid inputs, which mutation rarely produces
+  "structure-aware",  # mutates a field and repairs the length describing it
+  "dictionary",       # format keywords and magic values
+  "cmplog-guided",
+  "havoc",
+  "splice",
+]
+dictionary_file = "examples/tlv.dict"
+grammar_file = "examples/tlv.bnf"
+
+[strategies.params]
+# Deeper nesting finds recursion bugs; too deep and generation spends its
+# budget on inputs the parser rejects for depth alone.
+grammar_max_depth = 6
+# A fraction of generated inputs are perturbed just outside the grammar, which
+# is where a parser's error handling lives.
+grammar_mutation_rate = 0.2
+structure_header_len = 4
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "cmplog", "sanitizer"]
+
+[intel]
+scheduler = "thompson"
+round_budget = 64
+
+[reproduction]
+attempts = 5
+required_successes = 3
+minimize = true
+
+[output]
+dir = ".aether"
+report_formats = ["json", "markdown", "sarif"]

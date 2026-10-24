@@ -49,7 +49,11 @@ fn hex16(bytes: &[u8]) -> String {
 /// Validate a hash that arrived from outside the process before it is used to
 /// build a filesystem path. Refuses anything that is not plain lowercase hex.
 pub fn validate_content_hash(h: &str) -> crate::error::Result<()> {
-    if h.len() != 32 || !h.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+    if h.len() != 32
+        || !h
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
         return Err(crate::error::Error::storage(
             "content hash",
             format!("{h:?} is not 32 lowercase hex characters"),
@@ -94,7 +98,13 @@ mod tests {
 
     #[test]
     fn rejects_non_hex_hashes() {
-        for bad in ["", "xyz", "../../etc/passwd", &"A".repeat(32), &"a".repeat(31)] {
+        for bad in [
+            "",
+            "xyz",
+            "../../etc/passwd",
+            &"A".repeat(32),
+            &"a".repeat(31),
+        ] {
             assert!(validate_content_hash(bad).is_err(), "accepted {bad:?}");
         }
     }

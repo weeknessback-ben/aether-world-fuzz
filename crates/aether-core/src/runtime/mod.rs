@@ -31,9 +31,7 @@ use crate::evidence::report::{
 };
 use crate::evidence::signature::signature_for;
 use crate::evidence::validate::{self, DedupDecision};
-use crate::evidence::{
-    Confidence, Evidence, Finding, FindingStatus, ReproductionRecord,
-};
+use crate::evidence::{Confidence, Evidence, Finding, FindingStatus, ReproductionRecord};
 use crate::exec::native::{NativeExecutor, TargetSpec};
 use crate::exec::{Executor, ExitClass};
 use crate::feedback::FeedbackEngine;
@@ -63,7 +61,10 @@ impl Cancel {
     /// mechanism that works without a daemon or a socket, and it survives the
     /// cancelling process exiting immediately afterwards.
     pub fn with_sentinel(path: std::path::PathBuf) -> Self {
-        Cancel { flag: Arc::new(AtomicBool::new(false)), sentinel: Some(Arc::new(path)) }
+        Cancel {
+            flag: Arc::new(AtomicBool::new(false)),
+            sentinel: Some(Arc::new(path)),
+        }
     }
 
     /// Request cancellation of a campaign running elsewhere.
@@ -214,11 +215,8 @@ impl Campaign {
         // Scope is checked inside TargetSpec::from_config, which is the only
         // way to construct a spec, so there is no path to an executor that
         // skipped it.
-        let spec = TargetSpec::from_config(
-            &config.target,
-            &config.scope,
-            config.output.max_log_bytes,
-        )?;
+        let spec =
+            TargetSpec::from_config(&config.target, &config.scope, config.output.max_log_bytes)?;
         let executor = NativeExecutor::new(spec.clone(), &scratch)?;
 
         let oracle = match &config.target.oracle_binary {
@@ -322,7 +320,10 @@ impl Campaign {
             self.corpus.add(
                 &mut self.store,
                 b"\0",
-                NewInput { strategy_id: Some("bootstrap"), ..Default::default() },
+                NewInput {
+                    strategy_id: Some("bootstrap"),
+                    ..Default::default()
+                },
             )?;
         }
         Ok(stats)
@@ -346,6 +347,7 @@ impl Campaign {
         let max_execs = self.config.campaign.max_execs;
         let stop_after = self.config.campaign.stop_after_findings;
         let mut last_checkpoint = Instant::now();
+        let mut last_status = Instant::now();
 
         let reason = loop {
             if self.cancel.is_cancelled() {
@@ -379,10 +381,17 @@ impl Campaign {
             }
 
             // Checkpoint on a timer rather than per round, so a short round
-                        // does not dominate the campaign with serialisation work.
-            if last_checkpoint.elapsed() > Duration::from_secs(5) {
-                self.save_checkpoint()?;
+            // does not dominate the campaign with serialisation work.
+            // Status is refreshed more often than the checkpoint: a client
+            // polling progress wants it within a second or two, while a
+            // checkpoint serialises the coverage map and is not worth doing
+            // that often.
+            if last_status.elapsed() > Duration::from_millis(1500) {
                 self.write_status_file()?;
+                last_status = Instant::now();
+            }
+            if last_checkpoint.elapsed() > Duration::from_secs(20) {
+                self.save_checkpoint()?;
                 last_checkpoint = Instant::now();
             }
         };
@@ -400,11 +409,7 @@ impl Campaign {
     }
 
     /// One scheduling round.
-    fn run_round(
-        &mut self,
-        deadline: Option<Instant>,
-        max_execs: u64,
-    ) -> Result<Response> {
+    fn run_round(&mut self, deadline: Option<Instant>, max_execs: u64) -> Result<Response> {
         let corpus_size = self.corpus.len(&self.store)?;
         let saturation = self.feedback.coverage().saturation();
         let ctx = self.intel.context(corpus_size, saturation);
@@ -416,7 +421,9 @@ impl Campaign {
         let mut bases: Vec<Base> = Vec::new();
         for _ in 0..8 {
             if let Some(rec) = self.corpus.sample(&self.store, &mut self.rng, 64)? {
-                let Ok(bytes) = self.corpus.get_bytes(&rec.content_hash) else { continue };
+                let Ok(bytes) = self.corpus.get_bytes(&rec.content_hash) else {
+                    continue;
+                };
 
                 // A comparison-guided strategy needs the operands this input
                 // produced. They only exist once it has been executed, so the
@@ -433,8 +440,7 @@ impl Campaign {
                     // Keep the cache bounded; dropping the oldest half is
                     // cheap and the entries are re-derivable by one run.
                     if self.cmp_cache.len() >= 4096 {
-                        let drop: Vec<_> =
-                            self.cmp_cache.keys().take(2048).cloned().collect();
+                        let drop: Vec<_> = self.cmp_cache.keys().take(2048).cloned().collect();
                         for k in drop {
                             self.cmp_cache.remove(&k);
                         }
@@ -442,7 +448,11 @@ impl Campaign {
                     self.cmp_cache.insert(rec.id.clone(), entries.clone());
                     entries
                 };
-                bases.push(Base { id: rec.id, bytes, cmp_entries });
+                bases.push(Base {
+                    id: rec.id,
+                    bytes,
+                    cmp_entries,
+                });
             }
         }
 
@@ -505,11 +515,7 @@ impl Campaign {
                         novelty: feedback.novelty,
                         exec_micros: feedback.cost_micros,
                         behavior_sig: sig.as_deref(),
-                        state_transitions: feedback
-                            .response_codes
-                            .len()
-                            .try_into()
-                            .unwrap_or(0),
+                        state_transitions: feedback.response_codes.len().try_into().unwrap_or(0),
                         finding_id: None,
                     },
                 )?;
@@ -530,8 +536,6 @@ impl Campaign {
                 }
             }
 
-
-
             // The operands this execution produced are already in hand, so
             // caching them against the new corpus entry saves the extra run
             // when it is later drawn as a mutation base.
@@ -542,7 +546,11 @@ impl Campaign {
             }
 
             self.intel.record_execution(&feedback, produced_finding);
-            results.push(CandidateResult { note: cand.note, feedback, retained });
+            results.push(CandidateResult {
+                note: cand.note,
+                feedback,
+                retained,
+            });
         }
 
         self.strategies[arm].observe(&results);
@@ -561,7 +569,9 @@ impl Campaign {
         outcome: &crate::exec::ExecOutcome,
         strategy_id: &str,
     ) -> Result<bool> {
-        let Some(signature) = signature_for(outcome) else { return Ok(false) };
+        let Some(signature) = signature_for(outcome) else {
+            return Ok(false);
+        };
 
         // Deduplicate before spending any executions on reproduction: the same
         // signature arriving a thousand times must cost nothing extra.
@@ -699,7 +709,8 @@ impl Campaign {
                 },
             )?;
             if let AddOutcome::Added(id) | AddOutcome::Duplicate(id) = add {
-                self.corpus.mark_finding_input(&self.store, &id, &finding.id)?;
+                self.corpus
+                    .mark_finding_input(&self.store, &id, &finding.id)?;
                 finding.input_id = Some(id);
             }
             self.counters
@@ -711,7 +722,11 @@ impl Campaign {
         self.store.record_event(
             self.id.as_str(),
             "finding",
-            Some(&format!("{} {}", finding.status.as_str(), finding.signature.label)),
+            Some(&format!(
+                "{} {}",
+                finding.status.as_str(),
+                finding.signature.label
+            )),
         )?;
         self.findings.push(finding);
         Ok(confirmed)
@@ -734,8 +749,11 @@ impl Campaign {
             Response::DiversifyStrategies | Response::ResampleCorpus => {
                 // Both are already how the scheduler and corpus sampler
                 // behave; recorded so a report can show the detector fired.
-                self.store
-                    .record_event(self.id.as_str(), "stagnation", Some(&format!("{advice:?}")))?;
+                self.store.record_event(
+                    self.id.as_str(),
+                    "stagnation",
+                    Some(&format!("{advice:?}")),
+                )?;
             }
             Response::PreferGeneration => {
                 self.store.record_event(
@@ -762,7 +780,10 @@ impl Campaign {
     }
 
     fn confirmed_count(&self) -> u32 {
-        self.findings.iter().filter(|f| f.status.is_confirmed()).count() as u32
+        self.findings
+            .iter()
+            .filter(|f| f.status.is_confirmed())
+            .count() as u32
     }
 
     fn set_state(&self, state: &str) -> Result<()> {
@@ -807,7 +828,9 @@ impl Campaign {
     }
 
     fn persist_strategy_stats(&self, arm: usize) -> Result<()> {
-        let Some(name) = self.intel.scheduler.arms().get(arm) else { return Ok(()) };
+        let Some(name) = self.intel.scheduler.arms().get(arm) else {
+            return Ok(());
+        };
         let s = &self.intel.scheduler.global_stats()[arm];
         self.store.conn().execute(
             "INSERT INTO strategy_stats(campaign_id, strategy_id, rounds, execs, value_sum, \
@@ -1020,7 +1043,9 @@ impl Campaign {
             target_name: self.config.target.name.clone(),
             target_binary: self.config.target.binary.display().to_string(),
             profile: self.config.profile.clone(),
-            status: reason.map(|r| r.as_str().to_string()).unwrap_or_else(|| "running".into()),
+            status: reason
+                .map(|r| r.as_str().to_string())
+                .unwrap_or_else(|| "running".into()),
             started_at: crate::time::format_rfc3339(self.started_ms),
             finished_at: reason.map(|_| crate::time::format_rfc3339(crate::time::now_millis())),
             duration_ms: elapsed.as_millis() as u64,
@@ -1031,8 +1056,7 @@ impl Campaign {
                 crashes_observed: self.counters.crashes.load(Ordering::Relaxed),
                 timeouts_observed: self.counters.timeouts.load(Ordering::Relaxed),
                 clean_runs: self.counters.clean_runs.load(Ordering::Relaxed),
-                mean_exec_micros: (execs > 0)
-                    .then(|| elapsed.as_micros() as f64 / execs as f64),
+                mean_exec_micros: (execs > 0).then(|| elapsed.as_micros() as f64 / execs as f64),
                 last_progress_at: (last > 0).then(|| crate::time::format_rfc3339(last)),
             },
             coverage: self.feedback.coverage().into(),
@@ -1093,13 +1117,21 @@ impl Campaign {
             if let Some(rec) = self.corpus.sample(&self.store, &mut self.rng, 64)? {
                 if let Ok(bytes) = self.corpus.get_bytes(&rec.content_hash) {
                     let outcome = self.executor.run(&bytes)?;
-                    bases.push(Base { id: rec.id, bytes, cmp_entries: outcome.cmp_entries });
+                    bases.push(Base {
+                        id: rec.id,
+                        bytes,
+                        cmp_entries: outcome.cmp_entries,
+                    });
                 }
             }
         }
         let n_bases = bases.len();
         let cands = self.strategies[0].propose(64, &bases, &mut self.rng);
-        let notes: Vec<String> = cands.iter().take(4).map(|c| format!("{} ({}B)", c.note, c.bytes.len())).collect();
+        let notes: Vec<String> = cands
+            .iter()
+            .take(4)
+            .map(|c| format!("{} ({}B)", c.note, c.bytes.len()))
+            .collect();
         Ok((n_bases, cands.len(), notes))
     }
 
@@ -1121,11 +1153,17 @@ impl Campaign {
 }
 
 fn load_dictionary(config: &Config) -> Result<Vec<Vec<u8>>> {
-    let mut tokens: Vec<Vec<u8>> =
-        config.strategies.dictionary.iter().map(|s| s.as_bytes().to_vec()).collect();
+    let mut tokens: Vec<Vec<u8>> = config
+        .strategies
+        .dictionary
+        .iter()
+        .map(|s| s.as_bytes().to_vec())
+        .collect();
     if let Some(path) = &config.strategies.dictionary_file {
         let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
-        tokens.extend(strategy::dictionary::DictionaryStrategy::parse_dictionary(&text)?);
+        tokens.extend(strategy::dictionary::DictionaryStrategy::parse_dictionary(
+            &text,
+        )?);
     }
     Ok(tokens)
 }
@@ -1151,7 +1189,10 @@ mod tests {
         let b = a.clone();
         assert!(!a.is_cancelled());
         b.cancel();
-        assert!(a.is_cancelled(), "cancellation must be visible through every clone");
+        assert!(
+            a.is_cancelled(),
+            "cancellation must be visible through every clone"
+        );
     }
 
     #[test]
@@ -1164,7 +1205,11 @@ mod tests {
             StopReason::NoProgress,
         ] {
             assert!(!r.as_str().is_empty());
-            assert!(!r.as_str().contains(' '), "{:?} should be a stable token", r);
+            assert!(
+                !r.as_str().contains(' '),
+                "{:?} should be a stable token",
+                r
+            );
         }
     }
 

@@ -67,9 +67,14 @@ pub fn reproduce(
     }
 
     // Most frequently observed signature, as the finding's identity.
-    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    // Most frequent first, so the dominant signature leads.
+    counts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     let dominant = counts.first().map(|(s, _)| s.clone());
-    let others = if counts.len() > 1 { counts[1..].to_vec() } else { Vec::new() };
+    let others = if counts.len() > 1 {
+        counts[1..].to_vec()
+    } else {
+        Vec::new()
+    };
 
     Ok(ReproductionOutcome {
         record: ReproductionRecord {
@@ -107,7 +112,9 @@ pub fn minimize_for_signature(
             return false;
         }
         match executor.run(candidate) {
-            Ok(o) => signature_for(&o).map(|s| s.hash == expected.hash).unwrap_or(false),
+            Ok(o) => signature_for(&o)
+                .map(|s| s.hash == expected.hash)
+                .unwrap_or(false),
             Err(e) => {
                 exec_error = Some(e);
                 false
@@ -122,7 +129,9 @@ pub fn minimize_for_signature(
     // Independent re-validation of the final result.
     let validated = {
         let o = executor.run(&outcome.input)?;
-        signature_for(&o).map(|s| s.hash == expected.hash).unwrap_or(false)
+        signature_for(&o)
+            .map(|s| s.hash == expected.hash)
+            .unwrap_or(false)
     };
 
     Ok((outcome, validated))
@@ -163,13 +172,17 @@ mod tests {
     use crate::ids::FindingId;
     use std::time::Duration;
 
+    /// How a stub executor answers: given the input and the call index,
+    /// produce an outcome.
+    type StubBehaviour = Box<dyn FnMut(&[u8], u64) -> ExecOutcome + Send>;
+
     /// Executor stub with programmable behaviour, so reproduction logic can be
     /// tested without a real target.
     struct StubExecutor {
         caps: ExecutorCapabilities,
         count: u64,
         /// Decides the outcome for a given input and call index.
-        behaviour: Box<dyn FnMut(&[u8], u64) -> ExecOutcome + Send>,
+        behaviour: StubBehaviour,
     }
 
     impl StubExecutor {
@@ -251,7 +264,10 @@ mod tests {
         let r = reproduce(&mut e, b"input", None, &cfg(5, 3)).unwrap();
         assert_eq!(r.record.attempts, 5);
         assert_eq!(r.record.successes, 5);
-        assert_eq!(r.record.implied_status(), super::super::FindingStatus::Reproducible);
+        assert_eq!(
+            r.record.implied_status(),
+            super::super::FindingStatus::Reproducible
+        );
         assert_eq!(r.clean_runs, 0);
     }
 
@@ -260,7 +276,10 @@ mod tests {
         // Crashes on every third call only.
         let mut e = StubExecutor::new(|_, i| if i % 3 == 0 { crash() } else { clean() });
         let r = reproduce(&mut e, b"input", None, &cfg(9, 5)).unwrap();
-        assert_eq!(r.record.successes, 3, "should count exactly the crashing runs");
+        assert_eq!(
+            r.record.successes, 3,
+            "should count exactly the crashing runs"
+        );
         assert_eq!(r.clean_runs, 6);
         assert_eq!(
             r.record.implied_status(),
@@ -274,7 +293,10 @@ mod tests {
         let mut e = StubExecutor::new(|_, _| clean());
         let r = reproduce(&mut e, b"input", None, &cfg(5, 3)).unwrap();
         assert_eq!(r.record.successes, 0);
-        assert_eq!(r.record.implied_status(), super::super::FindingStatus::Unconfirmed);
+        assert_eq!(
+            r.record.implied_status(),
+            super::super::FindingStatus::Unconfirmed
+        );
         assert!(r.dominant_signature.is_none());
     }
 
@@ -285,8 +307,14 @@ mod tests {
         let expected = signature_for(&crash()).unwrap();
         let mut e = StubExecutor::new(|_, _| outcome(ExitClass::Crash, Some(libc::SIGSEGV), None));
         let r = reproduce(&mut e, b"input", Some(&expected), &cfg(5, 3)).unwrap();
-        assert_eq!(r.record.successes, 0, "a different crash was counted as reproduction");
-        assert!(r.dominant_signature.is_some(), "the other failure should still be recorded");
+        assert_eq!(
+            r.record.successes, 0,
+            "a different crash was counted as reproduction"
+        );
+        assert!(
+            r.dominant_signature.is_some(),
+            "the other failure should still be recorded"
+        );
         assert_ne!(r.dominant_signature.unwrap().hash, expected.hash);
     }
 
@@ -302,7 +330,10 @@ mod tests {
             }
         });
         let r = reproduce(&mut e, b"input", None, &cfg(6, 3)).unwrap();
-        assert!(!r.other_signatures.is_empty(), "a second symptom should be recorded");
+        assert!(
+            !r.other_signatures.is_empty(),
+            "a second symptom should be recorded"
+        );
         assert_eq!(r.other_signatures.len(), 1);
     }
 
@@ -321,7 +352,12 @@ mod tests {
         });
         let (out, validated) =
             minimize_for_signature(&mut e, b"xxxxxBOOMyyyyy", &expected, &cfg(5, 3)).unwrap();
-        assert_eq!(out.input, b"BOOM", "got {:?}", String::from_utf8_lossy(&out.input));
+        assert_eq!(
+            out.input,
+            b"BOOM",
+            "got {:?}",
+            String::from_utf8_lossy(&out.input)
+        );
         assert!(validated, "minimised input should re-validate");
     }
 
@@ -342,15 +378,20 @@ mod tests {
             let mut e = StubExecutor::new(|_, _| crash());
             let (_, validated) =
                 minimize_for_signature(&mut e, &big, &expected, &cfg(5, 3)).unwrap();
-            assert!(validated, "control: an always-reproducing target must validate");
+            assert!(
+                validated,
+                "control: an always-reproducing target must validate"
+            );
             e.exec_count()
         };
-        assert!(total_calls >= 2, "expected at least a reduction and a re-validation");
+        assert!(
+            total_calls >= 2,
+            "expected at least a reduction and a re-validation"
+        );
 
         let last = total_calls - 1;
         let mut e = StubExecutor::new(move |_, i| if i >= last { clean() } else { crash() });
-        let (_, validated) =
-            minimize_for_signature(&mut e, &big, &expected, &cfg(5, 3)).unwrap();
+        let (_, validated) = minimize_for_signature(&mut e, &big, &expected, &cfg(5, 3)).unwrap();
         assert!(
             !validated,
             "re-validation failed but was reported as validated"
@@ -360,13 +401,15 @@ mod tests {
     #[test]
     fn minimisation_respects_its_execution_budget() {
         let expected = signature_for(&crash()).unwrap();
-        let mut e = StubExecutor::new(|input, _| {
-            if input.len() >= 500 {
-                crash()
-            } else {
-                clean()
-            }
-        });
+        let mut e = StubExecutor::new(
+            |input, _| {
+                if input.len() >= 500 {
+                    crash()
+                } else {
+                    clean()
+                }
+            },
+        );
         let mut c = cfg(5, 3);
         c.minimize_max_execs = 30;
         let big = vec![b'A'; 4096];
@@ -430,12 +473,19 @@ mod tests {
 
     #[test]
     fn sanitizer_faults_reproduce_and_minimise_together() {
-        let expected =
-            signature_for(&outcome(ExitClass::SanitizerFault, Some(libc::SIGABRT), Some("heap-buffer-overflow")))
-                .unwrap();
+        let expected = signature_for(&outcome(
+            ExitClass::SanitizerFault,
+            Some(libc::SIGABRT),
+            Some("heap-buffer-overflow"),
+        ))
+        .unwrap();
         let mut e = StubExecutor::new(move |input, _| {
             if input.len() >= 4 {
-                outcome(ExitClass::SanitizerFault, Some(libc::SIGABRT), Some("heap-buffer-overflow"))
+                outcome(
+                    ExitClass::SanitizerFault,
+                    Some(libc::SIGABRT),
+                    Some("heap-buffer-overflow"),
+                )
             } else {
                 clean()
             }
@@ -445,7 +495,11 @@ mod tests {
 
         let (out, validated) =
             minimize_for_signature(&mut e, b"AAAAAAAA", &expected, &cfg(5, 3)).unwrap();
-        assert_eq!(out.input.len(), 4, "should reduce to the minimum length that faults");
+        assert_eq!(
+            out.input.len(),
+            4,
+            "should reduce to the minimum length that faults"
+        );
         assert!(validated);
     }
 }

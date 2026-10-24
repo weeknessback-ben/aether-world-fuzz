@@ -188,7 +188,10 @@ impl CampaignReport {
     /// section still has an accurate picture.
     pub fn to_markdown(&self) -> String {
         let mut m = String::new();
-        m.push_str(&format!("# AETHER campaign report: {}\n\n", self.target_name));
+        m.push_str(&format!(
+            "# AETHER campaign report: {}\n\n",
+            self.target_name
+        ));
         m.push_str(&format!("- Campaign: `{}`\n", self.campaign_id));
         m.push_str(&format!("- Target: `{}`\n", self.target_binary));
         if let Some(p) = &self.profile {
@@ -203,7 +206,10 @@ impl CampaignReport {
             "- Duration: {}\n",
             crate::time::format_duration_ms(self.duration_ms)
         ));
-        m.push_str(&format!("- Random seed: `{}` (replays this campaign)\n\n", self.seed));
+        m.push_str(&format!(
+            "- Random seed: `{}` (replays this campaign)\n\n",
+            self.seed
+        ));
 
         // --- Findings ---
         m.push_str("## Findings\n\n");
@@ -220,8 +226,12 @@ impl CampaignReport {
             ));
         }
 
-        let confirmed: Vec<&Finding> =
-            self.findings.items.iter().filter(|f| f.status.is_confirmed()).collect();
+        let confirmed: Vec<&Finding> = self
+            .findings
+            .items
+            .iter()
+            .filter(|f| f.status.is_confirmed())
+            .collect();
         for f in &confirmed {
             m.push_str(&format!("### {} — {}\n\n", f.id, f.signature.label));
             m.push_str(&format!("- Status: **{}**\n", f.status.as_str()));
@@ -234,8 +244,10 @@ impl CampaignReport {
             if let Some(s) = &f.discovered_by {
                 m.push_str(&format!("- Found by strategy: `{s}`\n"));
             }
-            m.push_str(&format!("- Triggering input: `{}` ({} bytes)\n",
-                f.evidence.trigger_hash, f.evidence.trigger_size));
+            m.push_str(&format!(
+                "- Triggering input: `{}` ({} bytes)\n",
+                f.evidence.trigger_hash, f.evidence.trigger_size
+            ));
             if let (Some(h), Some(sz)) = (&f.evidence.minimized_hash, f.evidence.minimized_size) {
                 m.push_str(&format!("- Minimised input: `{h}` ({sz} bytes"));
                 if f.reproduction.minimized_validated {
@@ -296,12 +308,18 @@ impl CampaignReport {
         // --- Measurements ---
         m.push_str("## Measurements\n\n");
         m.push_str("| Metric | Value |\n| --- | --- |\n");
-        m.push_str(&format!("| Executions | {} |\n", self.execution.total_executions));
+        m.push_str(&format!(
+            "| Executions | {} |\n",
+            self.execution.total_executions
+        ));
         m.push_str(&format!(
             "| Executions per second | {:.0} |\n",
             self.execution.executions_per_second
         ));
-        m.push_str(&format!("| Edges reached | {} |\n", self.coverage.total_edges));
+        m.push_str(&format!(
+            "| Edges reached | {} |\n",
+            self.coverage.total_edges
+        ));
         m.push_str(&format!(
             "| Instrumented guards | {} |\n",
             self.coverage
@@ -321,8 +339,14 @@ impl CampaignReport {
             "| Distinct behaviours | {} |\n",
             self.corpus.distinct_behaviors
         ));
-        m.push_str(&format!("| Crashes observed | {} |\n", self.execution.crashes_observed));
-        m.push_str(&format!("| Timeouts observed | {} |\n", self.execution.timeouts_observed));
+        m.push_str(&format!(
+            "| Crashes observed | {} |\n",
+            self.execution.crashes_observed
+        ));
+        m.push_str(&format!(
+            "| Timeouts observed | {} |\n",
+            self.execution.timeouts_observed
+        ));
         m.push('\n');
 
         // --- Strategies ---
@@ -355,7 +379,10 @@ impl CampaignReport {
         m.push_str("## Environment and capabilities\n\n");
         let e = &self.environment;
         m.push_str(&format!("- Backend: `{}`\n", e.backend));
-        m.push_str(&format!("- Workers: {} (host has {} cores)\n", e.workers, e.cpu_cores));
+        m.push_str(&format!(
+            "- Workers: {} (host has {} cores)\n",
+            e.workers, e.cpu_cores
+        ));
         for (label, on) in [
             ("Fork server", e.fork_server),
             ("Edge coverage", e.edge_coverage),
@@ -399,11 +426,31 @@ impl CampaignReport {
     /// false positives in whatever system ingests this.
     pub fn to_sarif(&self) -> Result<String> {
         let rules: Vec<serde_json::Value> = [
-            ("AETHER-MEMORY-SAFETY", "Memory-safety violation reported by a sanitizer", "error"),
-            ("AETHER-CRASH", "Process terminated on a fault signal", "error"),
-            ("AETHER-HANG", "Target exceeded its execution deadline", "warning"),
-            ("AETHER-INVARIANT", "Operator-declared invariant violated", "warning"),
-            ("AETHER-DIFFERENTIAL", "Implementations disagreed on the same input", "warning"),
+            (
+                "AETHER-MEMORY-SAFETY",
+                "Memory-safety violation reported by a sanitizer",
+                "error",
+            ),
+            (
+                "AETHER-CRASH",
+                "Process terminated on a fault signal",
+                "error",
+            ),
+            (
+                "AETHER-HANG",
+                "Target exceeded its execution deadline",
+                "warning",
+            ),
+            (
+                "AETHER-INVARIANT",
+                "Operator-declared invariant violated",
+                "warning",
+            ),
+            (
+                "AETHER-DIFFERENTIAL",
+                "Implementations disagreed on the same input",
+                "warning",
+            ),
         ]
         .iter()
         .map(|(id, desc, level)| {
@@ -632,7 +679,11 @@ mod tests {
                 mean_exec_micros: Some(308.0),
                 last_progress_at: Some("2026-10-24T10:00:45.000Z".into()),
             },
-            coverage: CoverageSummary { total_edges: 142, guard_count: Some(190), saturation: Some(0.747) },
+            coverage: CoverageSummary {
+                total_edges: 142,
+                guard_count: Some(190),
+                saturation: Some(0.747),
+            },
             corpus: crate::corpus::CorpusStats {
                 entries: 230,
                 mean_score: 0.41,
@@ -662,7 +713,10 @@ mod tests {
                 memory_limit_enforced: false,
                 workers: 2,
                 cpu_cores: 4,
-                unavailable_signals: vec![("state-transition".into(), "target emits no status codes".into())],
+                unavailable_signals: vec![(
+                    "state-transition".into(),
+                    "target emits no status codes".into(),
+                )],
                 skipped_strategies: vec![("grammar".into(), "no grammar supplied".into())],
             },
             limitations: vec!["AFL++ adapter unavailable on this host".into()],
@@ -671,7 +725,10 @@ mod tests {
 
     #[test]
     fn json_round_trips() {
-        let r = report(vec![finding(FindingStatus::Reproducible, Severity::MemorySafety)]);
+        let r = report(vec![finding(
+            FindingStatus::Reproducible,
+            Severity::MemorySafety,
+        )]);
         let j = r.to_json().unwrap();
         let back: CampaignReport = serde_json::from_str(&j).unwrap();
         assert_eq!(back.campaign_id, r.campaign_id);
@@ -693,7 +750,11 @@ mod tests {
         assert_eq!(s.unconfirmed, 1);
         assert_eq!(s.duplicates, 1);
         assert_eq!(s.in_progress, 1);
-        assert_eq!(s.confirmed_count(), 2, "only reproducible and intermittent are confirmed");
+        assert_eq!(
+            s.confirmed_count(),
+            2,
+            "only reproducible and intermittent are confirmed"
+        );
     }
 
     #[test]
@@ -705,7 +766,10 @@ mod tests {
         let m = r.to_markdown();
         let findings_at = m.find("## Findings").unwrap();
         let unconfirmed_at = m.find("## Unconfirmed observations").unwrap();
-        assert!(findings_at < unconfirmed_at, "confirmed findings must come first");
+        assert!(
+            findings_at < unconfirmed_at,
+            "confirmed findings must come first"
+        );
         assert!(
             m.contains("**not** established defects"),
             "unconfirmed section must say plainly that these are not defects"
@@ -714,7 +778,10 @@ mod tests {
 
     #[test]
     fn markdown_never_claims_exploitability() {
-        let r = report(vec![finding(FindingStatus::Reproducible, Severity::MemorySafety)]);
+        let r = report(vec![finding(
+            FindingStatus::Reproducible,
+            Severity::MemorySafety,
+        )]);
         let m = r.to_markdown().to_lowercase();
         // Affirmative claims only: the disclaimer legitimately contains the
         // word "exploitable", which is the point of it.
@@ -726,7 +793,10 @@ mod tests {
             "remote code execution",
             "critical vulnerability",
         ] {
-            assert!(!m.contains(forbidden), "report over-claims: found {forbidden:?}");
+            assert!(
+                !m.contains(forbidden),
+                "report over-claims: found {forbidden:?}"
+            );
         }
         assert!(
             m.contains("not been assessed"),
@@ -748,10 +818,20 @@ mod tests {
     #[test]
     fn markdown_distinguishes_unmeasurable_from_zero() {
         let mut r = report(Vec::new());
-        r.coverage = CoverageSummary { total_edges: 0, guard_count: None, saturation: None };
+        r.coverage = CoverageSummary {
+            total_edges: 0,
+            guard_count: None,
+            saturation: None,
+        };
         let m = r.to_markdown();
-        assert!(m.contains("not reported"), "a missing guard count must not render as 0");
-        assert!(m.contains("not measurable"), "missing saturation must not render as 0%");
+        assert!(
+            m.contains("not reported"),
+            "a missing guard count must not render as 0"
+        );
+        assert!(
+            m.contains("not measurable"),
+            "missing saturation must not render as 0%"
+        );
     }
 
     #[test]
@@ -768,9 +848,18 @@ mod tests {
     #[test]
     fn markdown_lists_capability_gaps() {
         let m = report(Vec::new()).to_markdown();
-        assert!(m.contains("state-transition"), "unavailable signals must be listed");
-        assert!(m.contains("no grammar supplied"), "skipped strategies must be listed");
-        assert!(m.contains("AFL++ adapter unavailable"), "limitations must be listed");
+        assert!(
+            m.contains("state-transition"),
+            "unavailable signals must be listed"
+        );
+        assert!(
+            m.contains("no grammar supplied"),
+            "skipped strategies must be listed"
+        );
+        assert!(
+            m.contains("AFL++ adapter unavailable"),
+            "limitations must be listed"
+        );
         assert!(m.contains("Memory limit enforced: no"));
     }
 
@@ -795,7 +884,10 @@ mod tests {
         assert_eq!(results[0]["ruleId"], "AETHER-MEMORY-SAFETY");
         assert_eq!(results[0]["level"], "error");
         // A fingerprint lets a consumer dedupe across runs.
-        assert_eq!(results[0]["partialFingerprints"]["aetherSignature/v1"], "abcd1234");
+        assert_eq!(
+            results[0]["partialFingerprints"]["aetherSignature/v1"],
+            "abcd1234"
+        );
         // And the exploitability caveat has to survive into SARIF too.
         assert_eq!(results[0]["properties"]["exploitabilityAssessed"], false);
         assert!(results[0]["message"]["text"]
@@ -819,13 +911,19 @@ mod tests {
             .collect();
         for res in v["runs"][0]["results"].as_array().unwrap() {
             let used = res["ruleId"].as_str().unwrap();
-            assert!(declared.contains(&used.to_string()), "rule {used} not declared");
+            assert!(
+                declared.contains(&used.to_string()),
+                "rule {used} not declared"
+            );
         }
     }
 
     #[test]
     fn bench_json_is_flat_and_machine_readable() {
-        let r = report(vec![finding(FindingStatus::Reproducible, Severity::MemorySafety)]);
+        let r = report(vec![finding(
+            FindingStatus::Reproducible,
+            Severity::MemorySafety,
+        )]);
         let v: serde_json::Value = serde_json::from_str(&r.to_bench_json().unwrap()).unwrap();
         assert_eq!(v["total_executions"], 180_000);
         assert_eq!(v["findings_reproducible"], 1);

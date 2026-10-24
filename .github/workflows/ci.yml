@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Formatting and lints are cheap, so they run first and fail fast.
+  lint:
+    name: Format and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # The C runtime is compiled by both supported compilers with warnings as
+  # errors. It is linked into every instrumented target, so a warning here
+  # would propagate into every build a user makes.
+  runtime:
+    name: Coverage runtime (clang and gcc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with gcc
+        run: gcc -c -O2 -Wall -Wextra -Werror -o /tmp/rt-gcc.o runtime/aether_rt.c
+      - name: Compile with clang
+        run: clang -c -O2 -Wall -Wextra -Werror -o /tmp/rt-clang.o runtime/aether_rt.c
+      - name: Build a fixture and check it runs standalone
+        run: |
+          ./runtime/aether-cc -o /tmp/ladder fixtures/coverage_ladder.c
+          # An instrumented binary must behave normally with no AETHER_SHM_PATH
+          # set, or fixtures stop being runnable by hand.
+          printf 'AETHER' | /tmp/ladder; test $? -eq 6
+
+  # Unit tests need no external tooling beyond a C compiler for the fixtures.
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Report what this runner supports
+        run: |
+          clang --version
+          gcc --version
+          nproc
+      - run: cargo test --all --locked
+      - name: Doctor must find a usable backend
+        run: cargo run --release --bin aether -- doctor
+
+  # The integration suite compiles real fixtures and runs real campaigns, so it
+  # is slower and runs in release mode.
+  integration:
+    name: Integration and end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release -p aether-core --test exec_native
+      - run: cargo test --release -p aether-core --test campaign_e2e
+      - run: cargo test --release -p aether-core --test security
+      - name: Demonstrate a full campaign through the CLI
+        run: |
+          cargo build --release
+          ./runtime/aether-cc -o /tmp/crash_magic fixtures/crash_magic.c
+          ./target/release/aether target inspect /tmp/crash_magic
+          ./target/release/aether init --binary /tmp/crash_magic --output /tmp/ci.toml
+          sed -i 's/duration_secs = 60/duration_secs = 20/' /tmp/ci.toml
+          sed -i 's|dir = ".aether"|dir = "/tmp/.aether"|' /tmp/ci.toml
+          # Exit 3 means findings were confirmed, which is the expected result
+          # against a fixture with a planted defect.
+          ./target/release/aether campaign run --config /tmp/ci.toml || test $? -eq 3
+          ./target/release/aether findings list --dir /tmp/.aether
+          ./target/release/aether report generate --dir /tmp/.aether --format sarif --output /tmp/findings.sarif
+          python3 -c "import json; d=json.load(open('/tmp/findings.sarif')); assert d['version']=='2.1.0'; print('SARIF valid,', len(d['runs'][0]['results']), 'result(s)')"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: campaign-reports
+          path: /tmp/.aether/**/report.*
+          if-no-files-found: ignore
+
+  # Marked separately: these depend on optional tooling and must not turn an
+  # unrelated core failure into a mystery.
+  optimizer:
+    name: Optimisation lab (optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Solver comparison against exhaustive ground truth
+        run: cargo test --release -p aether-core --test optimizer_tuning -- --nocapture
+      - name: Throughput probe
+        run: cargo test --release -p aether-core --test perf_probe -- --nocapture
+
+  plugin:
+    name: Claude Code plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: integrations/claude-code/mcp-server/package-lock.json
+      - name: Build the MCP server
+        working-directory: integrations/claude-code/mcp-server
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+      - name: Health check reports its own status
+        run: ./integrations/claude-code/scripts/health-check.sh
+      - name: Validate the plugin manifest
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            claude plugin validate ./integrations/claude-code
+          else
+            echo "claude CLI unavailable on this runner; validating manifest shape with python"
+            python3 - <<'PY'
+          import json, pathlib
+          root = pathlib.Path("integrations/claude-code")
+          manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+          assert manifest["name"] == "aether-fuzzing"
+          # Component paths must start with ./ and must exist.
+          for agent in manifest["agents"]:
+              assert agent.startswith("./"), agent
+              assert (root / agent[2:]).is_file(), agent
+          mcp = json.loads((root / ".mcp.json").read_text())
+          assert "aether" in mcp["mcpServers"]
+          hooks = json.loads((root / "hooks" / "hooks.json").read_text())
+          assert "hooks" in hooks, "a hooks file needs the top-level 'hooks' wrapper"
+          for skill in (root / "skills").iterdir():
+              assert (skill / "SKILL.md").is_file(), skill
+          print("manifest shape ok")
+          PY
+          fi
+
+  # One job that proves the whole thing works on a machine with no clang, since
+  # that changes which capabilities are available and must degrade honestly
+  # rather than fail.
+  gcc-only:
+    name: Degraded host (gcc only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build a target with gcc instrumentation
+        run: |
+          cargo build --release
+          ./runtime/aether-cc --cc gcc -o /tmp/ladder-gcc fixtures/coverage_ladder.c
+          # gcc gives no comparison log, so inspect must report that honestly
+          # rather than recommending comparison-guided substitution.
+          ./target/release/aether target inspect /tmp/ladder-gcc --json > /tmp/inspect.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/inspect.json'))
+          assert d['instrumented'], 'gcc build should still report instrumentation'
+          assert not d['comparison_log'], 'gcc has no trace-cmp; this must not claim otherwise'
+          assert 'cmplog-guided' not in d['recommended_strategies'], 'must not recommend a strategy the target cannot feed'
+          print('gcc-only capabilities reported honestly')
+          "

@@ -16,19 +16,19 @@
 pub mod bench;
 pub mod config;
 pub mod corpus;
-pub mod exec;
-pub mod feedback;
-pub mod persist;
-pub mod query;
-pub mod strategy;
 pub mod error;
 pub mod evidence;
+pub mod exec;
+pub mod feedback;
 pub mod hash;
 pub mod ids;
 pub mod intel;
+pub mod persist;
+pub mod query;
 pub mod rng;
 pub mod runtime;
 pub mod scope;
+pub mod strategy;
 pub mod time;
 
 pub use error::{Error, Result};
