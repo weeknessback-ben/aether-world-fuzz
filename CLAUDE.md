@@ -15,7 +15,7 @@ before proposing that it should be one.
 
 ```bash
 cargo build --release
-cargo test                                                     # 437 tests
+cargo test                                                     # 524 tests
 cargo test --release --test optimizer_tuning -- --nocapture     # solver sweeps
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
@@ -48,7 +48,8 @@ with clang and no `libclang_rt` is exactly the case that would otherwise report
 available and fail at link time.
 
 An unimplemented feature refuses rather than substituting something else.
-Benchmark experiment G returns an error instead of a fabricated scaling number.
+Benchmark experiment F returns an error pointing at `tests/optimizer_tuning.rs`
+instead of running a campaign comparison and labelling it a solver result.
 
 ### Reproducibility must be established, not asserted
 
@@ -98,7 +99,8 @@ result or a bug that a change would reintroduce.
 | `crates/aether-core/src/intel/` | Bandit, stagnation, optimisation lab |
 | `crates/aether-core/src/corpus/` | Content store, ranking, minimisation |
 | `crates/aether-core/src/evidence/` | Finding lifecycle, signatures, reports |
-| `crates/aether-core/src/runtime/` | Campaign loop, checkpoints, workers |
+| `crates/aether-core/src/oracle/` | Differential and metamorphic checks, budgeted |
+| `crates/aether-core/src/runtime/` | Campaign loop, checkpoints, worker pool |
 | `crates/aether-cli/` | The `aether` command. No SQL — use `query` |
 | `fixtures/` | 11 C targets with known behaviour |
 | `integrations/claude-code/` | Plugin and MCP server. No fuzzing logic |
@@ -121,15 +123,37 @@ has actually been driven against the real engine.
 **A CLI command:** add it to `main.rs`, implement in `commands.rs`, support
 `--json`. No SQL — extend `aether_core::query` instead.
 
+**An oracle:** implement `Oracle`, including `describe()` and
+`cost_per_check()` — every check re-runs the target, so the cost is budgeted
+before it is spent. `unavailable()` must explain what is missing rather than
+letting the oracle be built and silently skip. A verdict separates `observed`
+facts from `interpretations`, and the interpretations are alternatives, never a
+conclusion.
+
+**A metamorphic relation:** add it to `Relation`, give it a `validity()` string
+saying when believing it is justified, and add the name to **both**
+`Relation::parse` and `OracleConfig::validate` — a typo must be a configuration
+error, not a check that never runs. A test asserts every relation states its
+validity.
+
 **An MCP tool:** add the Zod schema, the tool definition with a description
 that says what the result means, and the dispatch arm. Bound the output.
 
 ## Known gaps
 
 Documented in the README and the relevant modules. The substantial ones:
-multi-worker campaigns are not implemented; the libFuzzer and AFL++ adapters
-are interface-only and unverified; no constraint solver is wired in; and whole
-campaigns do not replay byte-for-byte.
+remote workers are not implemented (local thread pools are — see
+[D14](docs/DECISIONS.md)); a pooled campaign does not apply stagnation
+escalation, by decision; the libFuzzer and AFL++ adapters are interface-only
+and unverified; no constraint solver is wired in; and whole campaigns do not
+replay byte-for-byte.
+
+Two measured facts worth knowing before optimising anything: a pooled worker
+costs 336-366 microseconds of CPU per execution against the sequential loop's
+418, and nobody knows why yet
+([D16](docs/DECISIONS.md)); and the bandit's 36 contexts leave each cell with
+too few rounds in a short campaign, which a shrinkage prior mitigates rather
+than solves ([D19](docs/DECISIONS.md)).
 
 If you fix one, update the README's "What it does not do", `docs/DECISIONS.md`,
 and the honesty tests that currently assert the gap.
