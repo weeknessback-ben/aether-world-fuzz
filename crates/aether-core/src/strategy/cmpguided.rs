@@ -75,7 +75,8 @@ impl Strategy for CmpGuided {
             requires_corpus: true,
             produces_sequences: false,
             description: "substitutes constants the target compared against into the \
-                          input at the offset the compared bytes came from"
+                          input at the offset the compared bytes came from; grows the \
+                          input first when the target has not yet reached a comparison"
                 .into(),
         }
     }
@@ -117,31 +118,68 @@ impl Strategy for CmpGuided {
             }
         }
 
-        // Pass 2: constants seen anywhere in the campaign, written at random
-        // offsets. Weaker, but it covers the case where the input-side operand
-        // was transformed before the comparison and so cannot be located.
+        // Pass 2: constants seen anywhere in the campaign, written at an
+        // offset chosen at random. Weaker than a located substitution, but it
+        // covers the case where the input-side operand was transformed before
+        // the comparison and so cannot be found in the input.
         let ranked = self.store.ranked();
-        while out.len() < budget as usize && !ranked.is_empty() {
-            let base = &bases[rng.below(bases.len())];
-            if base.bytes.is_empty() {
-                break;
-            }
-            // Prefer frequently-seen constants: sample from the top third.
+        if !ranked.is_empty() {
+            // Prefer frequently-seen constants: a value the target keeps
+            // comparing against is likelier to be a real gate.
             let pool = ranked.len().div_ceil(3).max(1);
-            let (token, _) = &ranked[rng.below(pool)];
-            let enc = token.candidate_encodings();
-            let bytes = &enc[rng.below(enc.len())];
-            if bytes.len() > base.bytes.len() {
-                break;
-            }
-            let at = rng.below(base.bytes.len() - bytes.len() + 1);
-            let sub = Substitution { offset: at, bytes: bytes.clone() };
-            if let Some(b) = Self::apply_substitution(&base.bytes, &sub, self.max_len) {
-                out.push(Candidate::from_base(b, base, "place-constant"));
-            } else {
-                break;
+            while out.len() < budget as usize {
+                let base = &bases[rng.below(bases.len())];
+                let (token, _) = &ranked[rng.below(pool)];
+                let enc = token.candidate_encodings();
+                let bytes = &enc[rng.below(enc.len())];
+
+                // Grow the base when the constant does not fit. A short seed
+                // cannot hold an eight-byte magic value, and refusing to place
+                // it would leave the strategy unable to act on what it knows -
+                // which is exactly the situation a one-byte bootstrap seed
+                // against a length-checked target produces.
+                let mut buf = base.bytes.clone();
+                if buf.len() < bytes.len() {
+                    let want = (bytes.len() * 2).min(self.max_len).max(bytes.len());
+                    while buf.len() < want {
+                        buf.push(rng.byte());
+                    }
+                }
+                if buf.len() < bytes.len() || buf.len() > self.max_len {
+                    break;
+                }
+                let at = rng.below(buf.len() - bytes.len() + 1);
+                let sub = Substitution { offset: at, bytes: bytes.clone() };
+                match Self::apply_substitution(&buf, &sub, self.max_len) {
+                    Some(b) => out.push(Candidate::from_base(b, base, "place-constant")),
+                    // The write would be a no-op on this base; try another
+                    // rather than abandoning the pass.
+                    None => continue,
+                }
             }
         }
+
+        // Pass 3, the fallback: nothing could be placed, so grow and perturb
+        // the base to get the target far enough to perform a comparison at
+        // all. Without it the strategy can stall indefinitely on a target
+        // whose first check rejects short input before comparing anything,
+        // and never acquire the data it exists to exploit.
+        if out.is_empty() {
+            for _ in 0..budget {
+                let base = &bases[rng.below(bases.len())];
+                let mut buf = base.bytes.clone();
+                let want = rng.between(8, 64).min(self.max_len);
+                while buf.len() < want {
+                    buf.push(rng.byte());
+                }
+                super::mutate::havoc(&mut buf, rng, self.max_len, 2);
+                if buf.is_empty() || buf == base.bytes {
+                    continue;
+                }
+                out.push(Candidate::from_base(buf, base, "bootstrap-reach-comparison"));
+            }
+        }
+
         out
     }
 
@@ -243,6 +281,61 @@ mod tests {
         assert!(
             cands.iter().any(|c| c.bytes.contains(&0x5A)),
             "single-byte constant was never placed"
+        );
+    }
+
+    #[test]
+    fn bootstraps_when_the_target_has_not_reached_a_comparison_yet() {
+        // A one-byte seed against a target with a length check ahead of its
+        // magic check yields no operands. Without a bootstrap path the
+        // strategy would propose nothing for the whole campaign and never
+        // acquire the data it exists to exploit.
+        let mut s = strategy();
+        let mut rng = Rng::from_seed(20);
+        let b = base_with(b"\0", Vec::new());
+        let cands = s.propose(16, &[b], &mut rng);
+
+        assert!(!cands.is_empty(), "strategy starved itself with no comparison data");
+        assert!(cands.iter().all(|c| c.note == "bootstrap-reach-comparison"));
+        assert!(cands.iter().all(|c| c.bytes.len() > 1), "bootstrap must grow the seed");
+        assert!(
+            cands.iter().any(|c| c.bytes.len() >= 8),
+            "bootstrap should grow the input past a minimum-length check"
+        );
+    }
+
+    #[test]
+    fn bootstrap_stops_once_constants_are_known() {
+        let mut s = strategy();
+        let mut rng = Rng::from_seed(21);
+        // Teach it one constant; it should now place that rather than bootstrap.
+        s.store.observe(&[entry(0xCAFE_BABE, 0x1111_1111, 4)]);
+        let cands = s.propose(8, &[base_with(b"zzzzzzzz", Vec::new())], &mut rng);
+        assert!(!cands.is_empty());
+        assert!(
+            cands.iter().all(|c| c.note != "bootstrap-reach-comparison"),
+            "should exploit the known constant rather than bootstrap"
+        );
+    }
+
+    #[test]
+    fn grows_a_short_base_to_fit_a_wider_constant() {
+        // The case that stalled a real campaign: a one-byte seed against a
+        // target whose first check is `n < 8`. That check is itself an
+        // instrumented comparison, so the strategy learns the constant 8 as an
+        // eight-byte value - which cannot be written into a one-byte input.
+        // Refusing to place it left the strategy proposing nothing for 9,000
+        // consecutive rounds while executing once in total.
+        let mut s = strategy();
+        let mut rng = Rng::from_seed(22);
+        let b = base_with(b"\0", vec![entry(8, 0, 8)]);
+        let cands = s.propose(16, &[b], &mut rng);
+
+        assert!(!cands.is_empty(), "strategy stalled on a base too short for the constant");
+        assert!(
+            cands.iter().any(|c| c.bytes.len() >= 8),
+            "should have grown the base to fit an eight-byte constant: {:?}",
+            cands.iter().map(|c| c.bytes.len()).collect::<Vec<_>>()
         );
     }
 

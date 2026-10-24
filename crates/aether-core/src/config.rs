@@ -756,6 +756,20 @@ pub fn apply_profile(cfg: &mut Config, profile: &str) -> Result<()> {
             cfg.campaign.workers = 1;
             cfg.campaign.seed = 0xBEEF_1234;
             cfg.output.report_formats = vec!["json".into(), "bench-json".into()];
+            // Make the campaign a pure function of its seed, which a
+            // comparison between configurations needs.
+            //
+            // Two things otherwise make an outcome depend on machine load,
+            // both of them deliberate elsewhere: the adaptive schedulers
+            // reward discovery per unit of *measured* compute, and the corpus
+            // ranks cheaper inputs higher. Both read a wall-clock duration,
+            // so under different load the same seed explores a slightly
+            // different set of inputs. Useful in a real campaign, fatal to a
+            // controlled experiment - so this profile turns both off and
+            // accepts a less efficient search in exchange for replayability.
+            cfg.intel.scheduler = SchedulerKind::RoundRobin;
+            cfg.intel.selection_floor = 0.0;
+            cfg.intel.corpus_weights.execution_cost = 0.0;
         }
         other => {
             return Err(Error::config(

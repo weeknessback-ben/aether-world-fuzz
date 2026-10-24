@@ -19,6 +19,7 @@ use crate::error::{Error, Result};
 /// Schema version this build creates and reads.
 pub const SCHEMA_VERSION: i64 = 1;
 
+#[derive(Debug)]
 pub struct Store {
     conn: Connection,
 }

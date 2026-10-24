@@ -311,7 +311,7 @@ impl Corpus {
         let mut stmt = store.conn().prepare(
             "SELECT id, content_hash, strategy_id, parent_id, created_ms, size_bytes, \
              exec_count, exec_micros, new_edges, touched_edges, behavior_sig, score, finding_id \
-             FROM inputs WHERE campaign_id = ?1 ORDER BY score DESC, created_ms ASC LIMIT ?2",
+             FROM inputs WHERE campaign_id = ?1 ORDER BY score DESC, id ASC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![self.campaign_id.as_str(), limit as i64], |r| {
             Ok(self.row_to_record(r))
@@ -406,7 +406,7 @@ impl Corpus {
             let mut stmt = store.conn().prepare(
                 "SELECT id, content_hash FROM inputs \
                  WHERE campaign_id = ?1 AND finding_id IS NULL \
-                 ORDER BY score ASC, created_ms ASC LIMIT ?2",
+                 ORDER BY score ASC, id ASC LIMIT ?2",
             )?;
             let rows = stmt.query_map(
                 params![self.campaign_id.as_str(), excess as i64],
