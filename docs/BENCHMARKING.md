@@ -118,16 +118,17 @@ meaningless and the test should fail.
 | D | Coverage-only against coverage plus semantic signals | Implemented |
 | E | Blind mutation against comparison-guided substitution | Implemented |
 | F | Classical against quantum-inspired optimisers | In `tests/optimizer_tuning.rs` |
-| G | Worker scaling | **Not implemented** |
+| G | Worker scaling, 1 / 2 / 4 workers | Implemented |
 
 ```bash
 aether benchmark run --experiment e --config aether.toml --trials 5 --duration 60
+aether benchmark run --experiment g --config aether.toml --trials 3 --duration 20
 ```
 
-**G is refused rather than approximated.** Multi-worker campaigns are not
-implemented — the worker abstraction and transport interface exist, but the
-controller runs a single loop. Running something else and labelling it a
-scaling result would be fabricating one.
+**G measures equal wall clock, not equal executions.** The question is how much
+throughput and coverage an extra worker buys, which equal wall clock answers
+directly. A worker count above the host's core count measures oversubscription
+rather than scaling, and the observations say so when it happens.
 
 **F benchmarks solvers rather than campaigns**, so it lives with the
 hyperparameter sweeps:
@@ -184,9 +185,49 @@ What does not hold, and why:
   than papered over, and the end-to-end test asserts the observed tolerance
   rather than a determinism the engine does not currently provide.
 
+## Experiment G: what worker scaling measured
+
+Run on `coverage_ladder`, 3 trials per arm, 20 seconds per campaign, on a
+four-core host:
+
+| Arm | exec/s median | Edges min/med/max | Findings |
+| --- | --- | --- | --- |
+| 1 worker | 2 540 | 9 / 9 / 9 | 0 |
+| 2 workers | 5 619 | 9 / 9 / 9 | 0 |
+| 4 workers | 10 549 | 9 / 9 / 9 | 0 |
+
+**Throughput scaled roughly linearly** — 2.21× and 4.15× — up to the core
+count.
+
+**Coverage did not move at all.** `coverage_ladder` saturates its reachable
+coverage almost immediately, so every arm reached 9 edges with zero spread
+between trials. The extra workers bought throughput and, on this target at this
+budget, nothing else. Throughput is not the objective; no arm produced a
+reproducible finding.
+
+**A per-worker efficiency above 1.0 is a property of the baseline, not a
+speedup.** The single-worker arm runs the *sequential* campaign loop, which is
+a different and more expensive code path than a pooled worker. Measured
+directly with `time` on 10-second campaigns:
+
+| workers | exec/s | cores used | CPU per execution |
+| --- | --- | --- | --- |
+| 1 | 2 433 | 1.02 | 418 µs |
+| 2 | 5 651 | 2.08 | 366 µs |
+| 3 | 7 795 | 2.85 | 365 µs |
+| 4 | 9 869 | 3.32 | 336 µs |
+
+The per-execution CPU cost drops at the *first* pooled arm, so it is the code
+path and not the parallelism. One candidate cause was tested and ruled out
+(DECISIONS.md D15); the remainder is not isolated, and the experiment's own
+output says so next to the number rather than letting it read as super-linear
+scaling. Core utilisation never reached 4.0, so the pool leaves headroom on
+this host.
+
 ## Caveats on every number here
 
-- Single host, single worker, short campaigns.
+- Single host, short campaigns. Every number above is from one four-core
+  container and describes these fixtures on this machine.
 - Coverage is a proxy. The objective is reproducible findings, and a
   configuration that reaches more edges while finding nothing has not been shown
   better at what matters.

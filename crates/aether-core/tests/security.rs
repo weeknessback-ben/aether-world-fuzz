@@ -503,3 +503,210 @@ fn an_interrupted_write_is_not_mistaken_for_an_object() {
     assert_eq!(cas.clean_temporaries().unwrap(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// Oracles and workers: new surfaces, so new controls
+// ---------------------------------------------------------------------------
+
+/// A differential peer binary goes through the same scope and resolution
+/// checks as the primary target. A configuration must not be able to reach an
+/// arbitrary path through the second binary when it cannot through the first.
+#[test]
+fn a_differential_peer_binary_is_not_a_way_around_target_validation() {
+    let s = Scratch::new("sec-peer");
+    let bin = fixture("always_ok", Build::Instrumented);
+    let toml = format!(
+        r#"
+schema_version = 1
+[target]
+name = "t"
+kind = "differential"
+binary = "{}"
+differential_binary = "/nonexistent/peer/binary"
+[campaign]
+duration_secs = 1
+[feedback]
+providers = ["edge-coverage", "exit-class", "differential"]
+[oracles]
+enabled = ["differential"]
+[output]
+dir = "{}"
+"#,
+        bin.display(),
+        s.path.display()
+    );
+    // Either the config refuses it or campaign creation does, but it must not
+    // be accepted and then silently skipped.
+    let outcome = Config::from_toml_str(&toml).and_then(|cfg| {
+        aether_core::runtime::Campaign::create(cfg, aether_core::runtime::Cancel::new()).map(|_| ())
+    });
+    let Err(e) = outcome else {
+        panic!("a peer binary that does not exist must be refused");
+    };
+    let msg = e.to_string();
+    assert!(
+        msg.contains("peer") || msg.contains("binary") || msg.contains("nonexistent"),
+        "the refusal should name the peer binary: {msg}"
+    );
+}
+
+/// An oracle must not be able to spend the campaign's whole budget. The
+/// allowance is a hard cap, and a refusal is counted rather than hidden.
+#[test]
+fn an_oracle_cannot_overspend_its_allowance() {
+    use aether_core::oracle::OracleBudget;
+
+    let mut b = OracleBudget::from_fraction(1_000, 0.1);
+    assert_eq!(b.allowance, 100);
+
+    // Spend it all, then keep asking.
+    let mut granted = 0;
+    for _ in 0..1_000 {
+        if b.reserve(10) {
+            granted += 1;
+        }
+    }
+    assert_eq!(granted, 10, "only the allowance may be granted");
+    assert_eq!(b.spent, 100, "spend must never exceed the allowance");
+    assert_eq!(
+        b.skipped_no_budget, 990,
+        "every refusal must be counted, so a report can say oracle coverage was partial"
+    );
+
+    // A single request larger than the whole allowance is refused outright
+    // rather than partially served.
+    let mut b = OracleBudget::from_fraction(1_000, 0.01);
+    assert!(
+        !b.reserve(50),
+        "a request beyond the allowance must be refused"
+    );
+    assert_eq!(b.spent, 0);
+}
+
+/// A metamorphic transformation must not be able to grow an input past the
+/// configured maximum: that would be testing the size limit, not the relation,
+/// and would let a relation drive unbounded allocation.
+#[test]
+fn a_metamorphic_transformation_respects_the_input_size_limit() {
+    use aether_core::oracle::metamorphic::Relation;
+
+    let input = vec![b'x'; 600];
+    // Doubling 600 bytes exceeds a 1000-byte limit, so the relation is skipped.
+    assert!(
+        Relation::SelfConcatenation.apply(&input, 1_000).is_none(),
+        "a transformation past the limit must be skipped, not truncated or allowed"
+    );
+    // Within the limit it applies normally.
+    assert_eq!(
+        Relation::SelfConcatenation
+            .apply(&input, 2_000)
+            .map(|v| v.len()),
+        Some(1_200)
+    );
+}
+
+/// An unknown oracle or relation name is a configuration error. Accepting it
+/// and running without the check would mean a campaign silently had less
+/// coverage than its configuration claims.
+#[test]
+fn unknown_oracle_and_relation_names_are_refused() {
+    let s = Scratch::new("sec-oracle-names");
+    let bin = fixture("always_ok", Build::Instrumented);
+    for (frag, needle) in [
+        ("enabled = [\"telepathy\"]", "telepathy"),
+        (
+            "enabled = [\"metamorphic\"]\nmetamorphic_relations = [\"vibes\"]",
+            "vibes",
+        ),
+        ("enabled = []\nbudget_fraction = 2.0", "budget_fraction"),
+    ] {
+        let toml = format!(
+            r#"
+schema_version = 1
+[target]
+name = "t"
+kind = "executable"
+binary = "{}"
+[campaign]
+duration_secs = 1
+[oracles]
+{frag}
+[output]
+dir = "{}"
+"#,
+            bin.display(),
+            s.path.display()
+        );
+        let Err(e) = Config::from_toml_str(&toml) else {
+            panic!("{frag} should be refused");
+        };
+        assert!(
+            e.to_string().contains(needle),
+            "the refusal should name what was wrong ({needle}): {e}"
+        );
+    }
+}
+
+/// Each worker in a pool gets its own scratch directory. Sharing one would let
+/// two workers overwrite each other's input file and execute the wrong bytes.
+#[test]
+fn pooled_workers_do_not_share_a_scratch_directory() {
+    let s = Scratch::new("sec-pool-scratch");
+    let bin = fixture("file_arg_reader", Build::Instrumented);
+    let toml = format!(
+        r#"
+schema_version = 1
+[target]
+name = "file_arg_reader"
+kind = "executable"
+binary = "{}"
+args = ["@@"]
+input_mode = "file-arg"
+use_fork_server = false
+timeout_ms = 1000
+[campaign]
+duration_secs = 0
+max_execs = 2000
+workers = 3
+seed = 20260124
+[output]
+dir = "{}"
+"#,
+        bin.display(),
+        s.path.display()
+    );
+    let cfg = Config::from_toml_str(&toml).expect("config");
+    let mut c = aether_core::runtime::Campaign::create(cfg, aether_core::runtime::Cancel::new())
+        .expect("create");
+    c.seed_corpus(None).expect("seed");
+    c.run().expect("run");
+
+    let stats = c.parallel_stats().expect("pool statistics");
+    assert!(
+        stats.worker_failures.is_empty(),
+        "workers racing on one scratch path would surface as failures: {:?}",
+        stats.worker_failures
+    );
+    // Every worker must have had a directory of its own under the pool root.
+    let pool = s
+        .path
+        .read_dir()
+        .expect("read output dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path().join("scratch").join("pool"))
+        .find(|p| p.is_dir())
+        .expect("the pool scratch root should exist");
+    let mut dirs: Vec<String> = pool
+        .read_dir()
+        .expect("read pool dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    dirs.sort();
+    assert_eq!(
+        dirs,
+        vec!["worker-0", "worker-1", "worker-2"],
+        "each worker needs its own scratch directory"
+    );
+}

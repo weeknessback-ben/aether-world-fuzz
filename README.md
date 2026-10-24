@@ -95,10 +95,18 @@ run and interpreted from a conversation. See
 
 Stated here rather than left to be discovered:
 
-- **No multi-worker campaigns.** The worker abstraction and transport interface
-  exist; the controller runs a single loop. `aether doctor` says so, and
-  benchmark experiment G refuses to run rather than report a fabricated scaling
-  number.
+- **No remote workers.** Multi-worker campaigns run as threads in one process,
+  and scale roughly linearly to the host's core count (2.21× and 4.15× for two
+  and four workers on a four-core host — experiment G). `WorkerTransport`
+  defines what a remote implementation would satisfy; `LocalTransport` is the
+  only one, and `aether doctor` reports distributed execution as unavailable.
+  A pooled campaign also does not apply stagnation escalation, because the
+  detector reads one sequential stream of rounds.
+- **Metamorphic relations are yours to declare.** The oracle checks the
+  relations you name and assumes none, because whether a relation holds depends
+  on what your target is. A violation is reported as a candidate with both
+  readings — the target is wrong, or the relation does not hold here — and never
+  as a confirmed defect.
 - **The libFuzzer and AFL++ adapters are unverified.** Interface-complete, with
   full capability declarations, but never exercised against the real engines
   because neither is installable on this host. They report

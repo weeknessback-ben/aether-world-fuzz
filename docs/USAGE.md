@@ -55,11 +55,13 @@ timeout_ms = 1000
 memory_limit_mb = 512
 instrumentation = "aether-native"
 oracle_binary = "build/parser-asan"   # optional sanitizer build
+# differential_binary = "build/parser-v2"  # second implementation, for the
+#                                          # differential oracle
 
 [campaign]
 duration_secs = 300
 max_execs = 0                    # 0 = unbounded; set one of these
-workers = 1
+workers = 1                      # above 1 runs a worker pool; see below
 seed = 20260124                  # recorded in every report
 max_input_bytes = 65536
 stop_after_findings = 0          # 0 = run the full budget
@@ -71,6 +73,19 @@ allow_network_targets = false
 # authorized_hosts = ["127.0.0.1:8080"]
 # authorization_note = "engagement ticket SEC-1234"
 # max_requests_per_second = 25
+
+[oracles]
+# Nothing is enabled implicitly: every oracle check re-runs the target and
+# spends budget that would otherwise go to exploration.
+enabled = []                     # "differential" and/or "metamorphic"
+# A metamorphic relation is a claim about *your* target that AETHER cannot
+# verify by inspection, so none is assumed. Each relation's validity
+# conditions are in docs/DECISIONS.md D17.
+metamorphic_relations = []       # determinism | trailing-newline |
+                                 # trailing-whitespace | self-concatenation |
+                                 # nul-padding
+budget_fraction = 0.05           # share of the execution budget oracles may use
+check_retained_only = true       # only inputs that showed the campaign something
 
 [strategies]
 enabled = []                     # empty = every strategy the target supports
@@ -139,6 +154,81 @@ it stops at its next execution boundary. Stored corpus and findings are kept.
 
 Status output distinguishes **not measured** from zero. `edges: not measured`
 means the target is uninstrumented; it does not mean no code was reached.
+
+## Several workers
+
+```bash
+aether campaign run --config aether.toml --workers 4
+```
+
+A pooled campaign shares one corpus and one coverage map across worker threads.
+Throughput scales roughly linearly up to the host's core count; measured
+figures for a four-core host are in [DECISIONS.md](DECISIONS.md) D16. What that
+buys in *coverage* depends entirely on the target — on a fixture whose
+reachable coverage saturates immediately, four workers bought throughput and no
+additional coverage at all.
+
+The report's `parallel` section records how the pool actually behaved:
+
+```bash
+jq '.parallel' .aether/<campaign-id>/report.json
+```
+
+| Field | What it tells you |
+| --- | --- |
+| `per_worker_executions` | Whether the load was shared. One busy worker means a problem |
+| `redundant_discoveries` | Two workers reaching the same coverage before either published it |
+| `lock_wait_micros` | Contention on the shared corpus |
+| `worker_failures` | A worker that stopped early, with the reason |
+
+Two limits a pooled campaign carries, which the report also states: stagnation
+escalation is not applied, and strategy allocation is per-worker rather than
+campaign-wide. Workers are threads in one process — remote workers are not
+implemented, which `aether doctor` reports.
+
+## Oracles
+
+An oracle asks a further question about an input that already ran. Both cost
+executions, so both are budgeted.
+
+**Differential testing** needs a second implementation:
+
+```toml
+[target]
+kind = "differential"
+binary = "build/parser-v1"
+differential_binary = "build/parser-v2"
+
+[feedback]
+providers = ["edge-coverage", "exit-class", "differential"]
+
+[oracles]
+enabled = ["differential"]
+```
+
+It compares exit class, exit code and standard output. It does **not** compare
+standard error or timing: diagnostics differ legitimately between
+implementations.
+
+**Metamorphic testing** needs you to declare which relations hold for your
+target:
+
+```toml
+[oracles]
+enabled = ["metamorphic"]
+metamorphic_relations = ["determinism", "trailing-newline"]
+```
+
+Declaring a relation without enabling the oracle is refused, rather than
+silently ignored. Pick only relations you know hold — `self-concatenation` is
+valid for a stream of self-delimiting records and wrong for a format with a
+single header.
+
+An oracle violation is recorded as a **candidate**, never as a confirmed
+defect: there is no crash to reproduce, so no reproduction run is made. The
+finding separates what was observed from what it might mean, and offers the
+readings as alternatives — including that the relation you declared may not
+hold for this target. Nothing is escalated to a security claim.
 
 ## Findings
 

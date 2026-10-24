@@ -277,3 +277,270 @@ available on this host, so no such adapter is claimed to work.
 QIEA-versus-annealing result is a genuine finding, and the interface is the
 right place for a hardware adapter should one become available. It costs
 nothing when disabled, which is its default state.
+
+## D14 — Multi-worker campaigns use a two-tier coverage check, not a shared lock per execution
+
+**Decision.** A pooled campaign runs each worker as an OS thread with its own
+executor, coverage region, scratch directory, strategy instances and RNG
+stream derived from `(campaign_seed, worker_index)`. Workers coordinate through
+one lock around the store, the corpus and a campaign-wide coverage map.
+
+Novelty is judged in two tiers. A worker checks its **own** coverage map first,
+with no lock. Only a locally-interesting run — a small fraction of executions —
+takes the shared lock to confirm against the campaign-wide map. Workers merge
+the global map back into their local one whenever another worker has
+discovered something, tracked by a generation counter so a worker can tell its
+map is stale without comparing 64 KiB.
+
+**Why not a lock per execution.** The campaign loop runs thousands of times a
+second per worker. Taking a global lock on every execution would serialise
+exactly the work the pool exists to parallelise.
+
+**Why not per-worker novelty alone.** Four workers judging novelty privately
+would each "discover" the same edge, and the corpus would fill with four
+equivalent inputs.
+
+**What it costs, measured.** A run that is novel locally but not globally still
+pays one lock acquisition, and two workers can briefly both believe they found
+the same edge. `ParallelStats::redundant_discoveries` counts how often that
+happens and `lock_wait_micros` records the contention, so the cost is a number
+in the report rather than an assumption.
+
+**A bug this design caused, and the fix.** The first implementation retained an
+input only when coverage was novel *globally*. That discarded every
+semantically-novel input — a new comparison constant, a new output shape —
+which is what the comparison-guided ladder is built from: a constant is
+observed first, and the edge behind it is only reached once that input has been
+mutated as a base. Retention now mirrors the sequential loop: globally-novel
+coverage **or** local semantic novelty. Corpus retention on `crash_magic` rose
+from 3 entries to 4–6 over the same budget.
+
+**What is deliberately not claimed.** Remote workers are not implemented.
+`WorkerTransport` defines registration, capability negotiation, leasing,
+heartbeats and result delivery, and `LocalTransport` is the only
+implementation. `aether doctor` reports distributed execution as unavailable.
+
+Stagnation escalation is **not** applied on the pooled path. The detector reads
+one sequential stream of rounds; advice derived from several workers'
+interleaved rounds would not mean what it says. A pooled campaign therefore
+stops on its budget, not on no-progress, and the report records that as a
+limitation.
+
+## D15 — Strategy statistics are persisted on a timer, and that bought nothing measurable
+
+**Decision.** `strategy_stats` rows are written on the same 1.5-second timer as
+the status file, and once more when the campaign stops, instead of once per
+scheduling round.
+
+**The hypothesis.** Experiment G showed per-worker throughput slightly above
+the single-worker rate, which cannot be true scaling. A SQLite upsert per round
+looked like the obvious per-round cost in the sequential loop that a pooled
+worker does not pay.
+
+**The measurement, which did not support it.** Three 15-second campaigns on
+`coverage_ladder` per side, median executions per second:
+
+| | median exec/s |
+|---|---|
+| upsert per round | 2497 |
+| upsert on the status timer | 2499 |
+
+No difference. The hypothesis was wrong.
+
+**Why the change is kept anyway.** Nothing reads the table between rounds, so
+the per-round write is I/O for no reader, and fewer writes cannot be worse —
+the saving is real on storage slower than this container's. It is kept as a
+simplification, **not** as a measured speedup, and the code comment says so.
+
+## D16 — What worker scaling actually measures on this host
+
+**The measurement.** `coverage_ladder`, 10-second campaigns, one run per worker
+count, CPU time from `time` (which includes reaped children):
+
+| workers | exec/s | cores used | CPU per execution |
+|---|---|---|---|
+| 1 | 2 433 | 1.02 | 418 µs |
+| 2 | 5 651 | 2.08 | 366 µs |
+| 3 | 7 795 | 2.85 | 365 µs |
+| 4 | 9 869 | 3.32 | 336 µs |
+
+Experiment G, three 20-second trials per arm, median: 2540, 5619 and 10 549
+executions per second for 1, 2 and 4 workers.
+
+**Throughput scales roughly linearly to four workers on this four-core host**:
+2.32×, 3.20× and 4.06× relative to one worker.
+
+**Why the efficiency figure exceeds 1.0, stated rather than left implied.** A
+per-worker efficiency above 1.0 cannot mean better than perfect scaling. The
+single-worker arm runs the *sequential* campaign loop, which is a different and
+more expensive code path than a pooled worker: 418 µs of CPU per execution
+against 336–366 µs. The drop appears at the first pooled arm, so it is the code
+path and not the parallelism. The baseline is therefore not a clean reference,
+and the report says so next to the number. D15 records the one candidate cause
+that was tested and ruled out; the remainder is not isolated.
+
+**Core utilisation never reached 4.0** — 3.32 at four workers — so the pool
+leaves headroom on this host, consistent with time spent blocked in `waitpid`.
+
+**Coverage bought no measurable gain.** Median coverage was 9 edges for every
+worker count on `coverage_ladder`, whose reachable coverage saturates almost
+immediately. The extra workers bought throughput, and at this budget on this
+target that is all the evidence shows. Throughput is not the objective;
+reproducible findings are, and none of these arms produced one.
+
+## D17 — Metamorphic relations are declared, never inferred
+
+**Decision.** No metamorphic relation is enabled by default. Each is named in
+`oracles.metamorphic_relations`, and each documents the conditions under which
+it holds. Declaring a relation without enabling the oracle is a configuration
+error, not a silently skipped check.
+
+**Why.** A metamorphic relation is a claim about the target — "appending a
+newline must not change what this program does." Whether it is true depends
+entirely on what the program is, and AETHER cannot find out by inspection.
+Enabling one by default would be asserting something about a target it has
+never seen.
+
+**What this means for a violation.** When a declared relation fails there are
+two readings of equal standing: the target is wrong, or the relation does not
+hold for this target and declaring it was a configuration mistake. The verdict
+reports both and chooses neither, and the finding's notes label them as
+possible readings rather than conclusions.
+
+**Equivalence is on exit class, not output.** A transformed input legitimately
+produces different output — append a record and a well-behaved parser prints
+one more line. What these relations assert is narrower and defensible: a
+transformation that preserves validity must not turn a clean run into a crash
+or a hang. A move between clean exit and non-zero exit is also not a violation:
+both mean the target handled the input without failing.
+
+**Deliberate exclusions.** A timeout after a length-increasing transformation
+is not counted — that is a longer input against a fixed deadline, not a
+relation failure. The exception is `determinism`, where the bytes are
+identical, so a timeout really is the target behaving differently.
+
+## D18 — Oracle violations do not go through reproduction, and are not confirmed
+
+**Decision.** An oracle violation becomes a finding with status `candidate`,
+severity from the evidence, and notes separating observed facts from possible
+readings. It does **not** go through `handle_candidate_failure`.
+
+**Why.** Reproduction means re-running an input and watching for the same
+crash. An oracle violation may involve no crash at all — two implementations
+printing different text is a real disagreement with nothing to reproduce by
+that method. Running the reproduction pipeline over it would produce a
+confirmation record about a question it did not ask.
+
+**What is claimed.** That the oracle observed a disagreement, with both sides
+recorded. The triggering input is stored and marked as the finding's input, so
+the evidence is never lost. The finding's notes state explicitly that no
+reproduction run was made and that it is a candidate for investigation rather
+than a confirmed defect.
+
+**Severity follows the evidence.** A disagreement where neither side crashed is
+`BehaviouralDifference`. A sanitizer report on either side makes it
+`MemorySafety`. A crash on either side is a crash first and a disagreement
+second. Nothing is escalated to a security claim: the engine does not assign
+exploitability or impact.
+
+**Oracles are budgeted.** Every check re-runs the target, so
+`oracles.budget_fraction` caps oracle spend as a share of the campaign's
+execution budget, reservations are refunded for what a check did not use, and
+checks refused for want of allowance are counted — so a report can say oracle
+coverage was partial rather than complete. By default only retained inputs are
+checked: those are the inputs that showed the campaign something, which is
+where an execution spent on a second opinion is worth it.
+
+## D19 — Two measured defects in the bandit scheduler, found by reading its own report
+
+Running a real four-worker campaign on `toy_parser` and reading the per-strategy
+numbers showed something that should not have been true: `cmplog-guided` found
+40 of the campaign's 44 new edges and received the **smallest** allocation
+share of the four strategies. That is the scheduler failing at its one job.
+Two separate defects were behind it.
+
+### Defect 1: the reward scale never adapted
+
+`Scheduler::value_scale` normalises an arm's value-per-millisecond into `[0, 1]`
+so it can be multiplied against the Beta posterior. It was initialised to
+**1.0** and only ever raised.
+
+Value per millisecond is entirely target-dependent. On `toy_parser` the best
+arm managed 0.027, so nothing ever exceeded 1.0, the scale never moved, and
+every arm's normalised magnitude sat near zero. With the score being
+`p * (0.25 + 0.75 * magnitude)`, the `0.25` floor then flattened a real 4.6×
+difference in value rate into **1.06×**. Selection was driven almost entirely
+by the binary productive-or-not posterior, which barely separates the arms.
+
+The scale now starts at zero — "nothing measured yet" — and is set by the first
+observation. A pooled campaign also shares the best rate any worker has seen,
+so one worker finding a high-value arm fixes the normalisation for all of them.
+
+### Defect 2: the context-specific estimate discarded the prior far too early
+
+`effective_stats` switched behaviour: once a `(context, arm)` cell had
+`min_rounds` rounds (default 3) it was used **alone** and the global prior was
+discarded entirely.
+
+There are 36 possible contexts. Measured on `toy_parser`, a worker's cells held
+about 25 rounds each at a roughly 2% rate of productive rounds — so a cell saw
+zero or one productive round. That is noise, and on the strength of it every
+other context's evidence, and every peer worker's, was thrown away.
+
+Context-specific evidence and the discounted prior are now **always** blended.
+The prior is a shrinkage term, which is what a contextual bandit with sparse
+per-context data needs.
+
+### What the fixes bought, measured
+
+Simulation driven by the arm statistics from the real campaign, mean of 7
+seeds. The figure is the share of rounds given to the arm that is ten times
+better per unit of compute; uniform allocation would be 0.25.
+
+| scenario | before | after |
+|---|---|---|
+| 1000 rounds, one context | 0.31 | 0.34 |
+| 1000 rounds, 9 contexts | 0.26 | **0.38** |
+| 4000 rounds, one context | 0.44 | **0.59** |
+| 4000 rounds, 9 contexts | 0.32 | **0.55** |
+
+Before the fixes, in the realistic multi-context case the scheduler was barely
+distinguishable from uniform allocation.
+
+On real four-worker 25-second campaigns against `toy_parser`:
+
+| | cmplog-guided share | new edges credited to it | exec/s |
+|---|---|---|---|
+| before | 0.19 | 61 | 9 958 |
+| after | 0.34 – 0.36 | 71 | 9 604 – 9 733 |
+
+**What this did not buy.** Total coverage stayed at 32 edges in every run:
+`toy_parser` saturates its reachable coverage with these strategies well inside
+25 seconds, so a better allocation had nothing further to reach. The
+improvement is in where the compute went and in the edges credited to the
+strategy that earned them — not in final coverage on this target. Throughput is
+unchanged within run-to-run variance.
+
+A regression test (`thompson_exploits_the_better_arm_at_realistic_value_rates`)
+now drives the scheduler at the small absolute value rates a real target
+produces and fails if the better arm's share falls below half. The original
+code would have failed it at 0.05.
+
+## D20 — Pooled workers share round statistics, not per-execution state
+
+**Decision.** In a pooled campaign each worker publishes its per-arm round
+totals to the shared state once per round and takes the pool's totals back as a
+peer prior, subtracting its own contribution so nothing is counted twice.
+
+**Why it is affordable.** There is one round outcome per round, not per
+execution — roughly one lock acquisition per sixty executions. Measured lock
+wait across a four-worker 25-second campaign was 0.26 s of 100 worker-seconds,
+and throughput was unchanged.
+
+**Why it is needed.** A worker scheduling on its own slice of the rounds cannot
+tell a much-better strategy from an average one; see D19 for the measurement.
+Sharing gives each worker four times the evidence at no measurable cost.
+
+**What is deliberately not shared.** Per-execution feedback, the semantic
+providers' state, and the comparison-token store all stay worker-local. Sharing
+those would mean a lock on the hot path, which is exactly what D14 avoids.

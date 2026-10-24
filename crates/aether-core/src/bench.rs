@@ -93,14 +93,13 @@ pub const EXPERIMENTS: &[ExperimentInfo] = &[
     ExperimentInfo {
         id: "g",
         title: "One worker versus several",
-        description: "Scaling efficiency across worker counts at an equal total execution \
-                      budget.",
-        implemented: false,
-        unimplemented_reason: "Multi-worker campaigns are not implemented: the worker \
-                               abstraction and transport interface exist, but the campaign \
-                               controller runs a single loop, so there is nothing to \
-                               compare. Reporting a scaling number here would be fabricating \
-                               one.",
+        description: "Scaling efficiency across worker counts at equal wall-clock budget. \
+                      Equal wall clock rather than equal executions, because the question \
+                      is how much throughput and coverage an extra worker buys - which \
+                      equal wall clock measures directly. Note that a worker count above \
+                      the host's core count measures oversubscription, not scaling.",
+        implemented: true,
+        unimplemented_reason: "",
     },
 ];
 
@@ -331,6 +330,17 @@ pub fn run_experiment(
                 c.strategies.enabled = vec!["cmplog-guided".into()];
             }),
         ],
+        "g" => vec![
+            arm("1-worker", "the sequential campaign loop", |c| {
+                c.campaign.workers = 1;
+            }),
+            arm("2-workers", "two worker threads on a shared corpus", |c| {
+                c.campaign.workers = 2;
+            }),
+            arm("4-workers", "four worker threads on a shared corpus", |c| {
+                c.campaign.workers = 4;
+            }),
+        ],
         other => {
             return Err(Error::config(
                 "experiment",
@@ -379,25 +389,158 @@ pub fn run_experiment(
 
     let observations = observe(&id, &summaries);
     Ok(ExperimentResults {
-        experiment: id,
+        experiment: id.clone(),
         title: info.title.to_string(),
         target: base.target.name.clone(),
         trials: trials.max(1),
         duration_secs,
         arms: summaries,
         observations,
-        caveats: vec![
-            "Single host, single worker, short campaigns. These numbers describe this \
-             target on this machine and do not generalise to other targets."
-                .into(),
-            "Fuzzing is stochastic: with a small number of trials, a difference smaller \
+        caveats: {
+            let mut c = vec![if id == "g" {
+                format!(
+                    "Single host with {} logical cores, short campaigns. These numbers \
+                     describe this target on this machine and do not generalise.",
+                    std::thread::available_parallelism()
+                        .map(|n| n.get().to_string())
+                        .unwrap_or_else(|_| "an unknown number of".into())
+                )
+            } else {
+                "Single host, single worker, short campaigns. These numbers describe this \
+                 target on this machine and do not generalise to other targets."
+                    .to_string()
+            }];
+            c.extend([
+                "Fuzzing is stochastic: with a small number of trials, a difference smaller \
              than the spread between trials is not a result."
-                .into(),
-            "Coverage is a proxy. The quantity that matters is reproducible findings, and \
+                    .into(),
+                "Coverage is a proxy. The quantity that matters is reproducible findings, and \
              a short campaign against a target with few defects will show none."
-                .into(),
-        ],
+                    .into(),
+            ]);
+            if id == "g" {
+                c.push(
+                    "The pool's controller thread also needs a core, and a pooled campaign \
+                     does not apply stagnation escalation, so these arms differ in more \
+                     than worker count."
+                        .into(),
+                );
+            }
+            c
+        },
     })
+}
+
+/// What the worker-count arms actually showed.
+///
+/// Scaling efficiency is throughput per worker relative to the single-worker
+/// arm. It is reported as measured: a pool contends for the shared corpus
+/// lock, for memory bandwidth and for cores with its own controller thread, so
+/// a figure below 1.0 is the expected result and not a defect. Where the
+/// measurement cannot support a conclusion, that is what is said.
+fn observe_scaling(arms: &[ArmSummary]) -> Vec<String> {
+    let mut out = Vec::new();
+    for arm in arms {
+        if let Some(r) = &arm.skipped {
+            out.push(format!("Arm `{}` could not be run here: {r}", arm.arm));
+        }
+    }
+
+    let cores = std::thread::available_parallelism().map(|n| n.get()).ok();
+    let eps = |a: &ArmSummary| a.stat(|m| m.executions_per_second).map(|s| s.1);
+    let Some(base_eps) = arms.first().and_then(eps) else {
+        out.push(
+            "The single-worker arm produced no throughput measurement, so no scaling \
+             figure can be computed from this run."
+                .to_string(),
+        );
+        return out;
+    };
+
+    for a in arms {
+        let Some(e) = eps(a) else { continue };
+        // The worker count is the leading number of the arm name.
+        let workers: u32 = a
+            .arm
+            .split('-')
+            .next()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(1);
+        let efficiency = crate::runtime::parallel::scaling_efficiency(base_eps, e, workers);
+        let edges = a
+            .median_edges()
+            .map(|v| format!("{v:.0}"))
+            .unwrap_or_else(|| "not measured".into());
+        let note = match cores {
+            Some(c) if workers as usize > c => format!(
+                " (above this host's {c} logical cores, so this arm measures \
+                 oversubscription rather than scaling)"
+            ),
+            _ => String::new(),
+        };
+        out.push(format!(
+            "`{}`: {e:.0} exec/s median, {:.2}x the single-worker rate, scaling efficiency \
+             {efficiency:.2} per worker; median coverage {edges} edges{note}.",
+            a.arm,
+            e / base_eps
+        ));
+        if efficiency > 1.0 {
+            // A figure above 1.0 cannot mean the pool beat perfect scaling.
+            // It means the baseline is not a clean reference: the
+            // single-worker arm runs the sequential campaign loop, which is a
+            // different code path from a worker. Measured on this host, that
+            // path costs about 418 microseconds of CPU per execution against
+            // 336 to 366 for a pooled worker, which is where the excess comes
+            // from. Said plainly rather than left as an implied speedup.
+            out.push(format!(
+                "The {:.2} figure for `{}` is above 1.0, which cannot mean better than \
+                 perfect scaling. The single-worker arm runs the sequential campaign loop, \
+                 a different and more expensive code path than a pooled worker, so it is \
+                 not a clean baseline; treat the throughput ratio as the measurement and \
+                 the efficiency figure as approximate.",
+                efficiency, a.arm
+            ));
+        }
+    }
+
+    // Coverage is the quantity that matters, so say whether the extra workers
+    // bought any - and whether the difference clears the between-trial spread.
+    let spread = |s: &ArmSummary| {
+        s.stat(|m| m.total_edges as f64)
+            .map(|(lo, _, hi, _)| hi - lo)
+            .unwrap_or(0.0)
+    };
+    if let (Some(first), Some(last)) = (arms.first(), arms.last()) {
+        if let (Some(e0), Some(e1)) = (first.median_edges(), last.median_edges()) {
+            let max_spread = spread(first).max(spread(last));
+            let diff = (e1 - e0).abs();
+            if diff <= max_spread {
+                out.push(format!(
+                    "Median coverage differs by {diff:.0} edges between `{}` and `{}`, \
+                     within the {max_spread:.0}-edge spread between trials of a single \
+                     arm. On this evidence the extra workers bought throughput but no \
+                     measurable additional coverage at this budget.",
+                    first.arm, last.arm
+                ));
+            } else {
+                out.push(format!(
+                    "`{}` reached median {e1:.0} edges against {e0:.0} for `{}`, a \
+                     difference of {diff:.0} edges exceeding the {max_spread:.0}-edge \
+                     between-trial spread.",
+                    last.arm, first.arm
+                ));
+            }
+        }
+    }
+
+    // Redundancy and lock contention are the costs of the design; they are
+    // measured per campaign and reported rather than assumed away.
+    out.push(
+        "Redundant discoveries and lock wait are recorded per campaign in the report's \
+         `parallel` section; see it for what the two-tier coverage check cost on these runs."
+            .to_string(),
+    );
+    out
 }
 
 type ArmSpec = (String, String, Box<dyn Fn(&mut Config)>);
@@ -468,6 +611,9 @@ fn observe(experiment: &str, arms: &[ArmSummary]) -> Vec<String> {
     let mut out = Vec::new();
     if arms.len() < 2 {
         return out;
+    }
+    if experiment == "g" {
+        return observe_scaling(arms);
     }
     let (a, b) = (&arms[0], &arms[1]);
 
@@ -563,19 +709,131 @@ mod tests {
 
     #[test]
     fn unimplemented_experiments_refuse_rather_than_substitute() {
-        // Experiment G compares worker counts, and multi-worker campaigns are
-        // not implemented. Running something else and labelling it G would be
-        // fabricating a scaling result.
+        // Experiment F benchmarks solvers rather than campaigns, so this
+        // harness cannot run it. Running something else and labelling it F
+        // would be fabricating a result.
         let cfg = Config::from_toml_str(
             "schema_version = 1\n[target]\nname=\"t\"\nkind=\"executable\"\nbinary=\"/bin/true\"\n",
         )
         .unwrap();
-        let e = run_experiment("g", cfg.clone(), 1, 1).unwrap_err();
-        assert_eq!(e.kind(), "unsupported_capability");
-        assert!(e.to_string().contains("not implemented"), "{e}");
-
         let e = run_experiment("f", cfg, 1, 1).unwrap_err();
-        assert!(e.to_string().contains("optimizer_tuning"), "{e}");
+        assert_eq!(e.kind(), "unsupported_capability");
+        assert!(
+            e.to_string().contains("optimizer_tuning"),
+            "the refusal should point at where the experiment does live: {e}"
+        );
+    }
+
+    #[test]
+    fn every_experiment_either_has_arms_or_says_why_not() {
+        // The catalogue and the dispatch must not drift: an experiment marked
+        // implemented with no arms would report an empty result as a finding,
+        // and one marked unimplemented must carry a reason.
+        for info in EXPERIMENTS {
+            if info.implemented {
+                assert!(
+                    info.unimplemented_reason.is_empty(),
+                    "experiment {} is implemented but carries a reason it is not",
+                    info.id
+                );
+            } else {
+                assert!(
+                    !info.unimplemented_reason.is_empty(),
+                    "experiment {} is not implemented and gives no reason",
+                    info.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_scaling_observer_never_claims_better_than_perfect_scaling() {
+        // A per-worker efficiency above 1.0 means the baseline is not a clean
+        // reference, not that the pool beat perfect scaling. The observer must
+        // say so next to the number rather than let it read as a speedup.
+        let arm = |name: &str, eps: f64, edges: u32| ArmSummary {
+            arm: name.to_string(),
+            description: String::new(),
+            trials: 1,
+            metrics: vec![TrialMetrics {
+                arm: name.to_string(),
+                trial: 0,
+                seed: 1,
+                duration_ms: 1000,
+                executions: eps as u64,
+                executions_per_second: eps,
+                total_edges: edges,
+                guard_count: Some(100),
+                corpus_entries: 1,
+                distinct_behaviors: 1,
+                findings_reproducible: 0,
+                findings_intermittent: 0,
+                crashes_observed: 0,
+                timeouts_observed: 0,
+                time_to_first_finding_ms: None,
+                micros_per_edge: None,
+            }],
+            skipped: None,
+        };
+
+        // Super-linear: must be flagged.
+        let out = observe_scaling(&[arm("1-worker", 1000.0, 9), arm("2-workers", 2400.0, 9)]);
+        assert!(
+            out.iter().any(|o| o.contains("cannot mean better than")),
+            "a >1.0 efficiency must be explained: {out:?}"
+        );
+
+        // Sub-linear: nothing to explain away.
+        let out = observe_scaling(&[arm("1-worker", 1000.0, 9), arm("2-workers", 1500.0, 9)]);
+        assert!(
+            !out.iter().any(|o| o.contains("cannot mean better than")),
+            "sub-linear scaling needs no caveat: {out:?}"
+        );
+        assert!(
+            out.iter().any(|o| o.contains("0.75")),
+            "the efficiency figure should be reported: {out:?}"
+        );
+    }
+
+    #[test]
+    fn scaling_reports_no_coverage_gain_when_there_is_none() {
+        let arm = |name: &str, eps: f64, edges: &[u32]| ArmSummary {
+            arm: name.to_string(),
+            description: String::new(),
+            trials: edges.len() as u32,
+            metrics: edges
+                .iter()
+                .enumerate()
+                .map(|(i, &e)| TrialMetrics {
+                    arm: name.to_string(),
+                    trial: i as u32,
+                    seed: i as u64,
+                    duration_ms: 1000,
+                    executions: eps as u64,
+                    executions_per_second: eps,
+                    total_edges: e,
+                    guard_count: Some(100),
+                    corpus_entries: 1,
+                    distinct_behaviors: 1,
+                    findings_reproducible: 0,
+                    findings_intermittent: 0,
+                    crashes_observed: 0,
+                    timeouts_observed: 0,
+                    time_to_first_finding_ms: None,
+                    micros_per_edge: None,
+                })
+                .collect(),
+            skipped: None,
+        };
+        let out = observe_scaling(&[
+            arm("1-worker", 1000.0, &[9, 9, 9]),
+            arm("4-workers", 4000.0, &[9, 9, 9]),
+        ]);
+        assert!(
+            out.iter()
+                .any(|o| o.contains("no measurable additional coverage")),
+            "equal coverage must be reported as no gain: {out:?}"
+        );
     }
 
     #[test]

@@ -46,6 +46,11 @@ pub struct CampaignReport {
     pub environment: EnvironmentReport,
     /// Everything that limits how far the results can be taken.
     pub limitations: Vec<String>,
+    /// How the worker pool ran, when the campaign used one. Absent for a
+    /// single-worker campaign, where the question does not arise - which is
+    /// not the same as a pool that contended badly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel: Option<crate::runtime::parallel::ParallelStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -720,6 +725,7 @@ mod tests {
                 skipped_strategies: vec![("grammar".into(), "no grammar supplied".into())],
             },
             limitations: vec!["AFL++ adapter unavailable on this host".into()],
+            parallel: None,
         }
     }
 

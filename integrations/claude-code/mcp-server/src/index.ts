@@ -124,6 +124,19 @@ const schemas = {
     seed: z.number().int().min(0).optional(),
     strategies: z.array(z.string().max(64)).max(32).optional(),
     seeds_dir: z.string().max(4096).optional().describe("Directory of seed inputs."),
+    workers: z
+      .number()
+      .int()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe(
+        "Worker threads. Each one saturates a core, so more workers than the host has " +
+          "cores measures oversubscription rather than scaling; aether_environment_check " +
+          "reports the core count. A pooled campaign does not apply stagnation " +
+          "escalation and reports strategy allocation per worker rather than " +
+          "campaign-wide.",
+      ),
     acknowledge_resource_use: z
       .boolean()
       .describe(
@@ -567,6 +580,7 @@ async function dispatch(name: string, rawArgs: unknown): Promise<CallToolResult>
       if (a.seed !== undefined) extra.push("--seed", String(a.seed));
       if (a.strategies?.length) extra.push("--strategies", a.strategies.join(","));
       if (a.seeds_dir) extra.push("--seeds", a.seeds_dir);
+      if (a.workers) extra.push("--workers", String(a.workers));
 
       const job = startCampaign(BINARY, config, dir, extra);
       if (job.state === "failed") {

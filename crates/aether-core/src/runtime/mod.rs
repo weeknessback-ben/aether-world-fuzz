@@ -15,6 +15,7 @@
 //! so a campaign stops promptly rather than at the end of a round.
 
 pub mod checkpoint;
+pub mod parallel;
 pub mod worker;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -193,6 +194,16 @@ pub struct Campaign {
     /// Set once the campaign has stopped, so a status read afterwards reports
     /// the real state rather than claiming the campaign is still running.
     final_state: Option<StopReason>,
+    /// How the worker pool ran, for a multi-worker campaign. `None` means no
+    /// pool ran, which is not the same as a pool that ran badly.
+    parallel_stats: Option<parallel::ParallelStats>,
+    /// The second implementation, for the differential oracle.
+    peer: Option<NativeExecutor>,
+    oracles: Vec<Box<dyn crate::oracle::Oracle>>,
+    /// Oracles that were configured but cannot run here, with the reason, so a
+    /// report says an oracle was missing rather than leaving a silent gap.
+    unavailable_oracles: Vec<(String, String)>,
+    oracle_budget: crate::oracle::OracleBudget,
 }
 
 impl Campaign {
@@ -226,6 +237,35 @@ impl Campaign {
             }
             _ => None,
         };
+
+        // The second implementation for differential testing. A separate
+        // executor from the sanitizer oracle: that one is the same program
+        // built differently, this one is a different program.
+        let peer = match &config.target.differential_binary {
+            Some(path) => {
+                let pspec = spec.with_binary(path)?;
+                Some(NativeExecutor::new(pspec, &scratch.join("peer"))?)
+            }
+            None => None,
+        };
+        let (oracles, unavailable_oracles) = crate::oracle::build(
+            &config.oracles.enabled,
+            &config.oracles.metamorphic_relations,
+            peer.is_some(),
+        )?;
+        let oracle_budget = crate::oracle::OracleBudget::from_fraction(
+            // With no execution budget the campaign is bounded by wall clock,
+            // so a fraction of it cannot be computed ahead of time. Estimated
+            // from the duration at a deliberately conservative rate, and the
+            // allowance is a cap rather than a target - an oracle that never
+            // reaches it simply spends less.
+            if config.campaign.max_execs > 0 {
+                config.campaign.max_execs
+            } else {
+                config.campaign.duration_secs.saturating_mul(1_000)
+            },
+            config.oracles.budget_fraction,
+        );
 
         let caps = executor.capabilities().clone();
         let dictionary = load_dictionary(&config)?;
@@ -301,6 +341,11 @@ impl Campaign {
             started_ms,
             scratch,
             final_state: None,
+            parallel_stats: None,
+            peer,
+            oracles,
+            unavailable_oracles,
+            oracle_budget,
         })
     }
 
@@ -337,6 +382,9 @@ impl Campaign {
             if g > 0 {
                 self.feedback.coverage_mut().set_guard_count(g);
             }
+        }
+        if self.config.campaign.workers > 1 {
+            return self.run_pool();
         }
 
         let deadline = if self.config.campaign.duration_secs > 0 {
@@ -388,6 +436,7 @@ impl Campaign {
             // that often.
             if last_status.elapsed() > Duration::from_millis(1500) {
                 self.write_status_file()?;
+                self.persist_all_strategy_stats()?;
                 last_status = Instant::now();
             }
             if last_checkpoint.elapsed() > Duration::from_secs(20) {
@@ -396,6 +445,161 @@ impl Campaign {
             }
         };
 
+        self.save_checkpoint()?;
+        self.persist_all_strategy_stats()?;
+        self.set_state(match reason {
+            StopReason::Cancelled => "cancelled",
+            _ => "completed",
+        })?;
+        self.final_state = Some(reason);
+        self.write_status_file()?;
+        self.store
+            .record_event(self.id.as_str(), "stopped", Some(reason.as_str()))?;
+        Ok(reason)
+    }
+
+    /// Run the campaign across a pool of worker threads.
+    ///
+    /// The controller does not fuzz. It hands the store and the corpus to the
+    /// pool, waits, then validates what came back - because reproduction
+    /// re-runs an input several times and two workers hitting the same defect
+    /// would otherwise validate it twice.
+    ///
+    /// Stagnation escalation is **not** applied on this path: the detector
+    /// reads one sequential stream of rounds, and advice derived from several
+    /// workers' interleaved rounds would not mean what it says. A pooled
+    /// campaign therefore stops on its budget, not on no-progress, and the
+    /// report records that as a limitation rather than leaving it implied.
+    fn run_pool(&mut self) -> Result<StopReason> {
+        let deadline = if self.config.campaign.duration_secs > 0 {
+            Some(self.started + Duration::from_secs(self.config.campaign.duration_secs))
+        } else {
+            None
+        };
+        let max_execs = self.config.campaign.max_execs;
+
+        // The pool needs the real store and corpus - the corpus carries the
+        // score norms accumulated so far, and a second handle would start from
+        // nothing. They are swapped out for fresh handles to the same files
+        // and swapped back when the pool stops, so `&mut self` stays valid
+        // throughout. The fresh handles are never used while the pool runs:
+        // the controller is blocked in `run_workers`.
+        let spare_store = Store::open(&self.config.output.dir.join("aether.sqlite"))?;
+        let spare_corpus = Corpus::open(
+            &self.config.output.dir.join(self.id.as_str()),
+            self.id.clone(),
+            self.config.intel.corpus_weights.clone(),
+            100_000,
+            self.config.max_input_bytes(),
+        )?;
+        let arm_count = self.intel.scheduler.arms().len();
+        let shared = parallel::SharedState::new(parallel::Shared {
+            store: std::mem::replace(&mut self.store, spare_store),
+            corpus: std::mem::replace(&mut self.corpus, spare_corpus),
+            coverage: std::mem::take(self.feedback.coverage_mut()),
+            generation: 0,
+            arm_totals: vec![crate::intel::bandit::ArmStats::default(); arm_count],
+            value_scale: 0.0,
+        });
+
+        let pool_started = Instant::now();
+        let candidate_findings = self.findings.len() as u32;
+        let confirmed_findings = self.confirmed_count();
+        let mut last_status = Instant::now();
+        let outcome = parallel::run_workers(
+            &self.config,
+            shared.clone(),
+            self.counters.clone(),
+            self.cancel.clone(),
+            &self.scratch.join("pool"),
+            deadline,
+            max_execs,
+            || {
+                if last_status.elapsed() <= Duration::from_millis(1500) {
+                    return;
+                }
+                last_status = Instant::now();
+                // Best effort: a status file that cannot be written must not
+                // stop a running campaign. The failure is recorded instead.
+                let _ = self.write_pool_status(&shared, candidate_findings, confirmed_findings);
+            },
+        );
+        let pool_elapsed = pool_started.elapsed();
+
+        // Take everything back before handling any error, so a failed pool
+        // still leaves the campaign able to write its report.
+        shared.with(|s| {
+            std::mem::swap(&mut self.store, &mut s.store);
+            std::mem::swap(&mut self.corpus, &mut s.corpus);
+            std::mem::swap(self.feedback.coverage_mut(), &mut s.coverage);
+        });
+        let (stats, candidates) = outcome?;
+
+        // Worker-added entries moved the score maxima, so every entry is
+        // reranked against the norms as they now stand.
+        self.corpus.rescore_all(&mut self.store)?;
+
+        for cand in &candidates {
+            if self.cancel.is_cancelled() {
+                break;
+            }
+            self.handle_candidate_failure(&cand.input, &cand.as_outcome(), &cand.strategy)?;
+        }
+
+        for (worker, err) in &stats.worker_failures {
+            self.store.record_event(
+                self.id.as_str(),
+                "worker-failed",
+                Some(&format!("worker {worker}: {err}")),
+            )?;
+        }
+        self.store.record_event(
+            self.id.as_str(),
+            "pool-finished",
+            Some(&format!(
+                "{} workers, {} executions, {} confirmed and {} redundant discoveries, \
+                 {:.1}% lock wait, {:.2} imbalance",
+                stats.workers,
+                stats.executions,
+                stats.confirmed_discoveries,
+                stats.redundant_discoveries,
+                stats.lock_overhead(pool_elapsed) * 100.0,
+                stats.imbalance(),
+            )),
+        )?;
+
+        let reason = if self.cancel.is_cancelled() {
+            StopReason::Cancelled
+        } else if max_execs > 0 && self.counters.executions.load(Ordering::Relaxed) >= max_execs {
+            StopReason::ExecutionBudgetReached
+        } else if deadline.is_some() {
+            StopReason::DurationElapsed
+        } else {
+            // Every worker stopped without a budget being reached, which only
+            // happens when they all failed. Reported, not dressed up as a
+            // completed campaign.
+            StopReason::NoProgress
+        };
+
+        for (id, arm) in &stats.strategy_stats {
+            self.store.conn().execute(
+                "INSERT INTO strategy_stats(campaign_id, strategy_id, rounds, execs, value_sum, \
+                 cost_micros, new_edges, findings) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) \
+                 ON CONFLICT(campaign_id, strategy_id) DO UPDATE SET rounds=?3, execs=?4, \
+                 value_sum=?5, cost_micros=?6, new_edges=?7, findings=?8",
+                rusqlite::params![
+                    self.id.as_str(),
+                    id,
+                    arm.rounds as i64,
+                    arm.executions as i64,
+                    arm.value_sum,
+                    arm.cost_micros as i64,
+                    arm.new_edges as i64,
+                    arm.findings as i64,
+                ],
+            )?;
+        }
+        self.parallel_stats = Some(stats);
         self.save_checkpoint()?;
         self.set_state(match reason {
             StopReason::Cancelled => "cancelled",
@@ -406,6 +610,71 @@ impl Campaign {
         self.store
             .record_event(self.id.as_str(), "stopped", Some(reason.as_str()))?;
         Ok(reason)
+    }
+
+    /// Status for a running pooled campaign.
+    ///
+    /// Separate from [`Campaign::status`] because the store and corpus are in
+    /// the pool's hands while it runs, so the live numbers have to be read
+    /// through the shared lock. Metrics a pooled campaign does not produce are
+    /// left absent rather than reported as zero: each worker runs its own
+    /// scheduler and stagnation detector, so a single campaign-wide strategy
+    /// allocation or stagnation phase would be a fabrication.
+    fn write_pool_status(
+        &self,
+        shared: &parallel::SharedState<parallel::Shared>,
+        candidate_findings: u32,
+        confirmed_findings: u32,
+    ) -> Result<()> {
+        let elapsed = self.started.elapsed();
+        let executions = self.counters.executions.load(Ordering::Relaxed);
+        // `None` for an uninstrumented target, so a reader can tell "not
+        // measurable" from "zero edges reached".
+        let instrumented = self.executor.capabilities().edge_coverage;
+        let (total_edges, saturation, corpus_entries) = shared.with(|s| {
+            (
+                instrumented.then(|| s.coverage.total_edges()),
+                s.coverage.saturation(),
+                s.corpus.len(&s.store).unwrap_or(0),
+            )
+        });
+        let last_progress = self.counters.last_progress_ms.load(Ordering::Relaxed);
+        let status = CampaignStatus {
+            campaign_id: self.id.as_str().to_string(),
+            target_name: self.config.target.name.clone(),
+            state: "running".into(),
+            elapsed_ms: elapsed.as_millis() as u64,
+            workers: self.config.campaign.workers,
+            total_executions: executions,
+            executions_per_second: if elapsed.as_secs_f64() > 0.0 {
+                executions as f64 / elapsed.as_secs_f64()
+            } else {
+                0.0
+            },
+            total_edges,
+            coverage_saturation: saturation,
+            corpus_entries,
+            candidate_findings,
+            confirmed_findings,
+            last_progress_ms: (last_progress > 0).then_some(last_progress),
+            stagnation_phase: "per-worker (not aggregated)".into(),
+            strategy_allocation: Vec::new(),
+        };
+        let path = Self::status_file(&self.config.output.dir, self.id.as_str());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(&status)?)
+            .map_err(|e| Error::io(&tmp, e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| Error::io(&path, e))?;
+        Ok(())
+    }
+
+    /// How the worker pool actually ran, or `None` for a single-worker
+    /// campaign where the question does not arise.
+    pub fn parallel_stats(&self) -> Option<&parallel::ParallelStats> {
+        self.parallel_stats.as_ref()
     }
 
     /// One scheduling round.
@@ -545,6 +814,16 @@ impl Campaign {
                 }
             }
 
+            // Oracles run after the campaign's own judgement, on inputs that
+            // showed it something: they re-run the target, so they spend
+            // budget that would otherwise go to exploration.
+            if !self.oracles.is_empty()
+                && (retained || !self.config.oracles.check_retained_only)
+                && !produced_finding
+            {
+                produced_finding |= self.run_oracles(&cand.bytes, &outcome, &strategy_id)?;
+            }
+
             self.intel.record_execution(&feedback, produced_finding);
             results.push(CandidateResult {
                 note: cand.note,
@@ -556,13 +835,201 @@ impl Campaign {
         self.strategies[arm].observe(&results);
         let (_, advice) = self.intel.finish_round(ctx, arm);
         self.apply_advice(&advice)?;
-        self.persist_strategy_stats(arm)?;
+        // Strategy statistics are *not* persisted here; they go on the status
+        // timer in `run`. Nothing reads the table between rounds, so a SQLite
+        // upsert per round is I/O for no reader.
+        //
+        // Measured honestly: it bought nothing on this host. Three 15-second
+        // campaigns on `coverage_ladder` gave a median of 2497 exec/s with the
+        // per-round write and 2499 without - no difference. The change is kept
+        // because fewer writes cannot be worse and the saving is real on
+        // slower storage than this container's, not because it was measured
+        // faster here. See docs/DECISIONS.md D15.
         Ok(advice)
     }
 
     /// Validate a candidate failure through the evidence pipeline.
     ///
     /// Returns whether a new confirmed finding was produced.
+    /// Put one input through every configured oracle.
+    ///
+    /// Returns whether any oracle produced a finding. Budget is reserved
+    /// before a check runs and refunded for what it did not use, so an oracle
+    /// cannot quietly overspend the campaign.
+    fn run_oracles(
+        &mut self,
+        input: &[u8],
+        outcome: &crate::exec::ExecOutcome,
+        strategy_id: &str,
+    ) -> Result<bool> {
+        let mut produced = false;
+        for i in 0..self.oracles.len() {
+            let cost = self.oracles[i].cost_per_check();
+            if cost == 0 || !self.oracle_budget.reserve(cost) {
+                // Out of allowance. Counted inside `reserve`, so the report
+                // can say oracle coverage was partial.
+                break;
+            }
+            let verdict = {
+                let mut ctx = crate::oracle::OracleContext {
+                    primary: &mut self.executor,
+                    peer: self.peer.as_mut().map(|p| p as &mut dyn Executor),
+                    budget: cost,
+                };
+                self.oracles[i].check(input, outcome, &mut ctx)
+            };
+            match verdict {
+                Ok(Some(v)) => {
+                    self.oracle_budget.refund(cost, v.executions_used);
+                    self.counters
+                        .executions
+                        .fetch_add(u64::from(v.executions_used), Ordering::Relaxed);
+                    produced |= self.record_oracle_verdict(input, v, strategy_id)?;
+                }
+                Ok(None) => {
+                    // No violation, or no check could be made. The executions
+                    // a passing check used are not knowable from here, so the
+                    // reservation stands rather than being refunded on a guess.
+                    self.counters
+                        .executions
+                        .fetch_add(u64::from(cost), Ordering::Relaxed);
+                }
+                Err(e) => {
+                    // An oracle that cannot run must not end the campaign: it
+                    // is an extra check, not the engine. Recorded and dropped
+                    // for the rest of the campaign so it cannot fail per input.
+                    self.oracle_budget.refund(cost, 0);
+                    let id = self.oracles[i].id().to_string();
+                    self.store.record_event(
+                        self.id.as_str(),
+                        "oracle-failed",
+                        Some(&format!("{id}: {e}")),
+                    )?;
+                    self.unavailable_oracles.push((id, e.to_string()));
+                    self.oracles.remove(i);
+                    break;
+                }
+            }
+        }
+        Ok(produced)
+    }
+
+    /// Turn an oracle violation into a finding.
+    ///
+    /// An oracle violation is not a process failure, so it does not go through
+    /// [`Campaign::handle_candidate_failure`]: there is nothing to reproduce
+    /// by re-running and watching for a crash. The oracle has already
+    /// established what it observed, and the input that showed it is kept.
+    /// The finding stays `Candidate` unless the oracle's own re-execution is
+    /// what confirmed it - and this one does not claim otherwise.
+    fn record_oracle_verdict(
+        &mut self,
+        input: &[u8],
+        verdict: crate::oracle::OracleVerdict,
+        strategy_id: &str,
+    ) -> Result<bool> {
+        let signature = crate::evidence::signature::signature_for_oracle(
+            &verdict.oracle,
+            &verdict.relation,
+            &verdict.label,
+        );
+        let existing: Vec<(FindingId, String)> = self
+            .findings
+            .iter()
+            .map(|f| (f.id.clone(), f.signature.hash.clone()))
+            .collect();
+        if let DedupDecision::Duplicate(_) = validate::deduplicate(&signature, &existing) {
+            return Ok(false);
+        }
+
+        let trigger_hash = self.corpus.content_store().put(input)?;
+        let mut finding = Finding {
+            id: FindingId::new(),
+            campaign_id: self.id.clone(),
+            status: FindingStatus::Candidate,
+            signature,
+            severity: verdict.severity,
+            confidence: Confidence::None,
+            input_id: None,
+            discovered_by: Some(strategy_id.to_string()),
+            reproduction: ReproductionRecord::default(),
+            evidence: Evidence {
+                trigger_hash,
+                trigger_size: input.len(),
+                minimized_hash: None,
+                minimized_size: None,
+                reproduce_argv: self.reproduce_argv(),
+                input_delivery: match self.config.target.input_mode {
+                    crate::config::InputMode::Stdin => "stdin".into(),
+                    crate::config::InputMode::FileArg => "a file path argument".into(),
+                },
+                exit_class: format!("oracle:{}", verdict.oracle),
+                signal: None,
+                exit_code: None,
+                sanitizer: None,
+                stderr_excerpt: String::new(),
+                stderr_truncated: false,
+                target_name: self.config.target.name.clone(),
+                target_binary: self.config.target.binary.display().to_string(),
+                target_build_id: None,
+                timeout_ms: self.config.target.timeout_ms,
+                memory_limit_mb: self.config.target.memory_limit_mb,
+                unenforced_limits: Vec::new(),
+                campaign_seed: self.config.campaign.seed,
+            },
+            duplicate_of: None,
+            notes: Vec::new(),
+            created_ms: crate::time::now_millis(),
+            updated_ms: crate::time::now_millis(),
+        };
+
+        // Observed facts and possible readings stay separated, and the
+        // readings are labelled as such.
+        for fact in &verdict.observed {
+            finding.add_note(format!("Observed: {fact}"));
+        }
+        for reading in &verdict.interpretations {
+            finding.add_note(format!("Possible reading (not established): {reading}"));
+        }
+        finding.add_note(format!(
+            "Reported by the {} oracle on relation `{}`. An oracle violation is not a \
+             crash: no reproduction run was made, so this finding is a candidate for \
+             investigation and not a confirmed defect.",
+            verdict.oracle, verdict.relation
+        ));
+
+        // The input that showed it is kept regardless of status, so the
+        // evidence is never lost.
+        let add = self.corpus.add(
+            &mut self.store,
+            input,
+            NewInput {
+                strategy_id: Some(strategy_id),
+                finding_id: Some(&finding.id),
+                ..Default::default()
+            },
+        )?;
+        if let AddOutcome::Added(id) | AddOutcome::Duplicate(id) = add {
+            self.corpus
+                .mark_finding_input(&self.store, &id, &finding.id)?;
+            finding.input_id = Some(id);
+        }
+
+        self.persist_finding(&finding)?;
+        self.store.record_event(
+            self.id.as_str(),
+            "oracle-violation",
+            Some(&format!("{}: {}", verdict.oracle, finding.signature.label)),
+        )?;
+        self.findings.push(finding);
+        self.counters
+            .last_progress_ms
+            .store(crate::time::now_millis(), Ordering::Relaxed);
+        // A candidate, not a confirmation: it counts as a discovery for the
+        // scheduler but is not reported as a validated defect.
+        Ok(true)
+    }
+
     fn handle_candidate_failure(
         &mut self,
         input: &[u8],
@@ -827,6 +1294,17 @@ impl Campaign {
         Ok(())
     }
 
+    /// Persist every arm's statistics.
+    ///
+    /// Called on the status timer rather than per round: see the note in
+    /// [`Campaign::run_round`] for the measurement behind that.
+    fn persist_all_strategy_stats(&self) -> Result<()> {
+        for arm in 0..self.intel.scheduler.arms().len() {
+            self.persist_strategy_stats(arm)?;
+        }
+        Ok(())
+    }
+
     fn persist_strategy_stats(&self, arm: usize) -> Result<()> {
         let Some(name) = self.intel.scheduler.arms().get(arm) else {
             return Ok(());
@@ -984,6 +1462,38 @@ impl Campaign {
         let limit_report = self.executor.limit_report();
 
         let mut limitations: Vec<String> = caps.limitations.clone();
+        if let Some(p) = &self.parallel_stats {
+            limitations.push(format!(
+                "Campaign ran {} worker threads. Stagnation escalation is not applied to a \
+                 pooled campaign: the detector reads one sequential stream of rounds, and \
+                 advice derived from several workers' interleaved rounds would not mean what \
+                 it says. Each worker ran its own scheduler, so strategy allocation is \
+                 per-worker and not aggregated campaign-wide.",
+                p.workers
+            ));
+            if p.redundancy_rate() > 0.25 {
+                limitations.push(format!(
+                    "{:.0}% of discoveries were redundant - two workers reaching the same \
+                     coverage before either had published it. Throughput figures from this \
+                     campaign include that duplicated work.",
+                    p.redundancy_rate() * 100.0
+                ));
+            }
+            if p.imbalance() > 0.3 {
+                limitations.push(format!(
+                    "Worker load was uneven (imbalance {:.2}): the busiest worker ran \
+                     materially more executions than the least busy one, so per-worker \
+                     throughput is not uniform across the pool.",
+                    p.imbalance()
+                ));
+            }
+            for (worker, err) in &p.worker_failures {
+                limitations.push(format!(
+                    "Worker {worker} stopped early ({err}); the campaign's execution count \
+                     does not include a full share from it."
+                ));
+            }
+        }
         limitations.extend(limit_report.unenforced.iter().cloned());
         if let Some(n) = &limit_report.memory_limit_substituted {
             limitations.push(n.clone());
@@ -1012,6 +1522,11 @@ impl Campaign {
         }
 
         let allocation = self.intel.scheduler.allocation();
+        // A pooled campaign's controller never schedules anything, so its own
+        // scheduler statistics are all zero. Reporting those would read as
+        // "this strategy ran nothing" rather than "the controller did not run
+        // it", so the workers' summed statistics are used instead.
+        let pooled_stats = self.parallel_stats.as_ref().map(|p| &p.strategy_stats);
         let strategies: Vec<StrategyReport> = self
             .intel
             .scheduler
@@ -1019,18 +1534,40 @@ impl Campaign {
             .iter()
             .enumerate()
             .map(|(i, id)| {
-                let s = &self.intel.scheduler.global_stats()[i];
+                let own = &self.intel.scheduler.global_stats()[i];
+                let s = match pooled_stats {
+                    Some(stats) => stats
+                        .iter()
+                        .find(|(n, _)| n == id)
+                        .map(|(_, a)| a)
+                        .unwrap_or(own),
+                    None => own,
+                };
+                // For a pool, the share is each strategy's measured share of
+                // all rounds the workers ran; the controller's own scheduler
+                // allocation would describe nothing that happened.
+                let share = match pooled_stats {
+                    Some(stats) => {
+                        let total: u64 = stats.iter().map(|(_, a)| u64::from(a.rounds)).sum();
+                        if total == 0 {
+                            0.0
+                        } else {
+                            f64::from(s.rounds) / total as f64
+                        }
+                    }
+                    None => allocation
+                        .iter()
+                        .find(|(n, _)| n == id)
+                        .map(|(_, v)| *v)
+                        .unwrap_or(0.0),
+                };
                 StrategyReport {
                     id: id.clone(),
                     rounds: s.rounds,
                     executions: s.executions,
                     new_edges: s.new_edges,
                     findings: s.findings,
-                    allocation_share: allocation
-                        .iter()
-                        .find(|(n, _)| n == id)
-                        .map(|(_, v)| *v)
-                        .unwrap_or(0.0),
+                    allocation_share: share,
                     value_per_ms: s.value_per_ms(),
                 }
             })
@@ -1079,6 +1616,7 @@ impl Campaign {
                 skipped_strategies: self.skipped_strategies.clone(),
             },
             limitations,
+            parallel: self.parallel_stats.clone(),
         })
     }
 

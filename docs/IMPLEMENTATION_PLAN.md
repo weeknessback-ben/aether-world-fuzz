@@ -95,8 +95,9 @@ and reported through MCP over real JSON-RPC stdio.
 | --- | --- |
 | Semantic feedback providers | done (exit class, response transitions, invariants) |
 | Stateful sequence generation | done |
-| Differential oracle | **not implemented** — fixtures exist (`diff_impl_a/b.c`), the oracle does not |
-| Metamorphic oracle | **not implemented** |
+| Differential oracle | done — compares exit class, exit code and standard output against a second implementation; stderr and timing deliberately excluded (D18) |
+| Metamorphic oracle | done — five declared relations, none enabled by default, because a relation is a claim about the target AETHER cannot verify (D17) |
+| Oracle execution budget | done — a hard cap as a share of the campaign, with refusals counted so partial coverage is reported |
 | Constraint-assisted exploration | **partial** — comparison-guided substitution is the constraint assistance that exists; no symbolic or SMT backend is wired in, and the stagnation detector records that the escalation was requested and not performed |
 
 ## Phase 6 — Distributed execution
@@ -104,11 +105,17 @@ and reported through MCP over real JSON-RPC stdio.
 | Item | Status |
 | --- | --- |
 | Local worker abstraction, transport, backpressure, priority | done |
-| Multi-worker campaign execution | **not implemented** — the controller runs a single loop |
+| Multi-worker campaign execution | done — a real thread pool over one shared corpus and coverage map, with a two-tier novelty check so the common path takes no lock (D14) |
+| Shared scheduler statistics | done — one lock per round, measured at 0.26 s of 100 worker-seconds (D20) |
+| Pool instrumentation | done — redundant discoveries, lock wait, per-worker load and worker failures are all reported |
+| Stagnation escalation in a pool | **not applied, by decision** — the detector reads one sequential stream of rounds, and advice from several workers' interleaved rounds would not mean what it says. The report records it as a limitation |
 | Remote worker transport | **interface-only** — `WorkerTransport` defines registration, capability negotiation, leasing, heartbeats and result delivery; only `LocalTransport` exists |
 
-`aether doctor` reports distributed execution as unavailable, and benchmark
-experiment G refuses to run rather than report a fabricated scaling number.
+`aether doctor` reports distributed execution as unavailable and the local pool
+as available with the host's core count. Benchmark experiment G measures
+scaling across 1, 2 and 4 workers: throughput scaled 2.21× and 4.15× on a
+four-core host, and coverage did not move on a fixture that saturates
+immediately (D16).
 
 ## Phase 7 — Quantum-inspired optimisation lab
 
@@ -133,42 +140,53 @@ classical simulated annealing. Recorded in
 
 | Item | Status |
 | --- | --- |
-| Unit tests | done (418) |
+| Unit tests | done (457) |
 | Integration tests | done (`exec_native`, 18) |
-| End-to-end tests | done (`campaign_e2e`, 13) |
-| Security tests | done (`security`, 18) |
-| Benchmark experiments | A–E implemented, F in the sweep harness, G refused |
+| End-to-end tests | done (`campaign_e2e`, 19, including three pooled and three oracle) |
+| Security tests | done (`security`, 23, including five for the oracle and worker surfaces) |
+| Benchmark experiments | A–E and G implemented, F in the sweep harness |
 | Performance probe | done |
-| CI | done (lint, runtime, test, integration, plugin, gcc-only degraded host) |
+| CI | done (lint, runtime, test, integration, pooled campaign, differential oracle, plugin, gcc-only degraded host) |
 
 ## Test count
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| `aether-core` unit | 418 | pass |
+| `aether-core` unit | 457 | pass |
 | `exec_native` integration | 18 | pass |
-| `campaign_e2e` end-to-end | 13 | pass |
-| `security` | 18 | pass |
+| `campaign_e2e` end-to-end | 19 | pass |
+| `security` | 23 | pass |
 | `optimizer_tuning` | 6 | pass |
 | `perf_probe` | 1 | pass |
-| **Total** | **474** | **pass** |
+| **Total** | **524** | **pass** |
 
 `cargo clippy --all-targets` reports no warnings; `cargo fmt --check` is clean.
 
 ## What remains, in the order worth doing it
 
-1. **Multi-worker campaigns.** The largest gap. The abstraction is in place;
-   the controller needs to drive several executors and merge their coverage.
-   Would make experiment G meaningful.
-2. **Differential and metamorphic oracles.** The fixtures and the design
-   (oracles, not strategies — see
-   [D11](DECISIONS.md#d11-differential-and-metamorphic-testing-are-oracles-not-generators))
-   exist; the implementations do not.
-3. **Isolate the residual replay variance.** Campaigns agree in roughly five
+Ordered by what the measurements say is worth doing, not by what sounds
+impressive.
+
+1. **Isolate the residual replay variance.** Campaigns agree in roughly five
    runs out of six under `research-benchmark` and otherwise differ by a single
-   edge. The execution layer is deterministic, so the cause is in scheduling.
+   edge. The execution layer is proven deterministic in isolation, so the cause
+   is in scheduling. This is first because every benchmark number above rests
+   on it.
+2. **Find out why a pooled worker costs less CPU per execution than the
+   sequential loop** — 336–366 µs against 418 µs (D16). One candidate was
+   tested and ruled out (D15). Whatever the sequential loop is paying for, a
+   single-worker campaign is paying it too.
+3. **Context fragmentation in the scheduler.** 36 contexts over a short
+   campaign leaves each cell with too few rounds; the shrinkage prior (D19)
+   mitigates it but does not solve it. Fewer, better-chosen context dimensions
+   would likely beat a better estimator.
 4. **A constraint-solving backend.** The escalation path exists and reports
    that it cannot act.
+5. **Remote workers.** `WorkerTransport` is ready. Lower priority than it
+   looks: throughput already scales to the core count, and throughput is not
+   the objective.
+6. **Verify the libFuzzer and AFL++ adapters** against the real engines on a
+   host where they install.
 5. **Verify the libFuzzer and AFL++ adapters** on a host where those engines can
    actually be installed.
 6. **FuzzBench or Magma**, for comparison against established fuzzers on real

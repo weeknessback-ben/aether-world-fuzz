@@ -86,6 +86,77 @@ jobs:
           ./target/release/aether findings list --dir /tmp/.aether
           ./target/release/aether report generate --dir /tmp/.aether --format sarif --output /tmp/findings.sarif
           python3 -c "import json; d=json.load(open('/tmp/findings.sarif')); assert d['version']=='2.1.0'; print('SARIF valid,', len(d['runs'][0]['results']), 'result(s)')"
+      - name: A pooled campaign must share the load and report how it ran
+        run: |
+          ./runtime/aether-cc -o /tmp/toy_parser fixtures/toy_parser.c
+          ./target/release/aether init --binary /tmp/toy_parser --output /tmp/pool.toml
+          sed -i 's/duration_secs = 60/duration_secs = 20/' /tmp/pool.toml
+          sed -i 's|dir = ".aether"|dir = "/tmp/.aether-pool"|' /tmp/pool.toml
+          ./target/release/aether campaign run --config /tmp/pool.toml --workers 2 || test $? -eq 3
+          # The pool must actually have run on both workers and said how. A
+          # runner with one core still schedules both threads, so this checks
+          # the reporting rather than the scaling.
+          python3 - <<'PY'
+          import glob, json, sys
+          path = glob.glob('/tmp/.aether-pool/*/report.json')[0]
+          d = json.load(open(path))
+          p = d.get('parallel')
+          assert p, 'a pooled campaign must report a parallel section'
+          assert p['workers'] == 2, p
+          assert len(p['per_worker_executions']) == 2, p
+          assert all(e > 0 for e in p['per_worker_executions']), \
+              f"every worker must run: {p['per_worker_executions']}"
+          assert not p['worker_failures'], p['worker_failures']
+          assert sum(s['executions'] for s in d['strategies']) > 0, \
+              'pooled strategy statistics must not all be zero'
+          assert any('Stagnation escalation is not applied' in l
+                     for l in d['limitations']), d['limitations']
+          print(f"pool ok: {p['executions']} execs, "
+                f"{p['redundant_discoveries']} redundant, "
+                f"{p['lock_wait_micros'] / 1e6:.2f}s lock wait")
+          PY
+      - name: The differential oracle must find a planted divergence
+        run: |
+          ./runtime/aether-cc -o /tmp/diff_a fixtures/diff_impl_a.c
+          ./runtime/aether-cc -o /tmp/diff_b fixtures/diff_impl_b.c
+          mkdir -p /tmp/diff-seeds && printf '+1' > /tmp/diff-seeds/plus
+          cat > /tmp/diff.toml <<'EOF'
+          schema_version = 1
+          [target]
+          name = "decimal_parser"
+          kind = "differential"
+          binary = "/tmp/diff_a"
+          differential_binary = "/tmp/diff_b"
+          timeout_ms = 1000
+          [campaign]
+          duration_secs = 0
+          max_execs = 4000
+          seed = 20260124
+          max_input_bytes = 256
+          [feedback]
+          providers = ["edge-coverage", "exit-class", "differential"]
+          [oracles]
+          enabled = ["differential"]
+          budget_fraction = 0.5
+          check_retained_only = false
+          [output]
+          dir = "/tmp/.aether-diff"
+          EOF
+          ./target/release/aether campaign run --config /tmp/diff.toml --seeds /tmp/diff-seeds || test $? -eq 3
+          python3 - <<'PY'
+          import glob, json
+          d = json.load(open(glob.glob('/tmp/.aether-diff/*/report.json')[0]))
+          diffs = [f for f in d['findings']['items']
+                   if f['evidence']['exit_class'] == 'oracle:differential']
+          assert diffs, 'the differential oracle found no divergence'
+          f = diffs[0]
+          # A non-crashing disagreement must not be escalated, and must not be
+          # reported as reproduction-validated.
+          assert f['severity'] == 'behavioural-difference', f['severity']
+          assert f['status'] == 'candidate', f['status']
+          assert any('not a confirmed defect' in n for n in f['notes']), f['notes']
+          print('differential oracle ok:', f['signature']['label'])
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -154,6 +154,50 @@ planted in the store cannot walk out of it.
 - **No tool can change the scope policy.** It lives in the configuration file
   and is enforced in the runtime.
 
+### A differential peer and a worker pool are not ways around the controls
+
+A differential peer binary is built through `TargetSpec::with_binary`, the same
+path the sanitizer oracle uses, so it inherits the scope check, binary
+resolution, environment clearing and limit policy of the primary target — and
+its sanitizer status is re-detected, because it is a different build. A peer
+that does not exist is refused at campaign creation, not accepted and skipped.
+Tested by `a_differential_peer_binary_is_not_a_way_around_target_validation`.
+
+Each pooled worker builds its own `TargetSpec` from the same validated
+configuration, so every worker passes the same checks. Each gets its **own**
+scratch directory: a shared one would let two workers overwrite each other's
+input file and execute bytes neither intended. Tested by
+`pooled_workers_do_not_share_a_scratch_directory`.
+
+### Oracles cannot overspend the campaign, and a skipped check is counted
+
+Every oracle check re-executes the target, so `oracles.budget_fraction` is a
+hard cap on oracle executions as a share of the campaign's budget.
+Reservations are taken before a check runs and refunded for what it did not
+use; a request larger than the remaining allowance is refused outright rather
+than partly served, and every refusal increments `skipped_no_budget` so a
+report can state that oracle coverage was partial rather than complete.
+
+A metamorphic transformation that would grow an input past
+`campaign.max_input_bytes` is skipped rather than truncated or allowed, so a
+declared relation cannot drive unbounded allocation.
+
+Unknown oracle names, unknown relation names and a `budget_fraction` outside
+`[0, 1]` are all refused at configuration validation. A typo must be an error,
+never a check that silently never runs. Tested by
+`an_oracle_cannot_overspend_its_allowance`,
+`a_metamorphic_transformation_respects_the_input_size_limit` and
+`unknown_oracle_and_relation_names_are_refused`.
+
+### An oracle violation is not escalated to a security claim
+
+A disagreement where neither implementation crashed is recorded as
+`BehaviouralDifference` with status `candidate`. The finding states that no
+reproduction run was made, separates observed facts from possible readings, and
+offers the readings as alternatives — including that a declared metamorphic
+relation may simply not hold for this target. Exploitability and impact are
+never assigned. See [DECISIONS.md](DECISIONS.md) D18.
+
 ## What is documented but not enforced
 
 Stated plainly, because the distinction is the point of this document.
@@ -179,7 +223,20 @@ untrusted input to whatever consumes them next.
 
 **Findings are not sanitized for downstream display.** A finding's stderr
 excerpt is target-controlled text, bounded but not escaped. A system rendering
-it as HTML must escape it.
+it as HTML must escape it. The same applies to an oracle verdict's observed
+facts, which quote the target's own output.
+
+**A pooled campaign shares one process.** Workers are threads, so a target that
+could corrupt the engine's address space would affect every worker, not one.
+That is already true of a single-worker campaign — the fork server runs the
+target in a child process — but the blast radius of a pool is the whole pool.
+Remote workers, which would give process-level separation, are not
+implemented.
+
+**A differential peer is as trusted as the primary target.** Both are local
+executables the operator chose, run under the same partial isolation. Pointing
+`differential_binary` at something hostile is the same risk as pointing
+`binary` at it.
 
 ## Residual risks
 

@@ -23,6 +23,7 @@ pub mod feedback;
 pub mod hash;
 pub mod ids;
 pub mod intel;
+pub mod oracle;
 pub mod persist;
 pub mod query;
 pub mod rng;

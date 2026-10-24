@@ -509,3 +509,408 @@ fn stateful_sequences_reach_an_order_dependent_defect() {
         r.coverage
     );
 }
+
+/// A pooled campaign must actually run on every worker, share the corpus, and
+/// report how the pool behaved - not quietly fall back to one worker.
+#[test]
+fn a_pooled_campaign_runs_all_its_workers_and_shares_one_corpus() {
+    let scratch = Scratch::new("pool-parallel");
+    let mut cfg = config_for(
+        "coverage_ladder",
+        Build::Instrumented,
+        &scratch.path,
+        "[intel]\nscheduler = \"thompson\"\n",
+    );
+    cfg.campaign.workers = 3;
+    cfg.campaign.duration_secs = 0;
+    cfg.campaign.max_execs = 9_000;
+
+    let (campaign, reason) = run_campaign(cfg);
+    assert_eq!(
+        reason,
+        StopReason::ExecutionBudgetReached,
+        "budget should end it"
+    );
+
+    let stats = campaign
+        .parallel_stats()
+        .expect("a multi-worker campaign must report pool statistics");
+    assert_eq!(stats.workers, 3);
+    assert!(
+        stats.worker_failures.is_empty(),
+        "no worker should fail against a working fixture: {:?}",
+        stats.worker_failures
+    );
+    assert_eq!(
+        stats.per_worker_executions.len(),
+        3,
+        "every worker must be accounted for"
+    );
+    // Every worker has to have done real work. A pool where one thread does
+    // everything is the bug this guards against.
+    for (i, execs) in stats.per_worker_executions.iter().enumerate() {
+        assert!(
+            *execs > 100,
+            "worker {i} ran only {execs} executions; the pool is not sharing the load"
+        );
+    }
+    assert!(
+        stats.executions >= 9_000,
+        "pool ran {} executions for a 9000 budget",
+        stats.executions
+    );
+
+    let report = campaign.report(Some(reason)).expect("report");
+    let parallel = report
+        .parallel
+        .as_ref()
+        .expect("the report must carry pool statistics");
+    assert_eq!(parallel.workers, 3);
+    // The report must say that stagnation escalation did not apply, rather
+    // than leaving a reader to assume it did.
+    assert!(
+        report
+            .limitations
+            .iter()
+            .any(|l| l.contains("Stagnation escalation is not applied")),
+        "pooled limitations missing: {:?}",
+        report.limitations
+    );
+
+    // Strategy statistics must come from the workers. The controller never
+    // schedules anything on this path, so reporting its own scheduler would
+    // list every strategy at zero - "ran nothing" where the truth is "the
+    // controller did not run it".
+    assert!(
+        !report.strategies.is_empty(),
+        "pooled report lists no strategies at all"
+    );
+    let strategy_execs: u64 = report.strategies.iter().map(|s| s.executions).sum();
+    assert!(
+        strategy_execs > 0,
+        "pooled report credits every strategy with zero executions: {:?}",
+        report
+            .strategies
+            .iter()
+            .map(|s| (&s.id, s.executions))
+            .collect::<Vec<_>>()
+    );
+    let share: f64 = report.strategies.iter().map(|s| s.allocation_share).sum();
+    assert!(
+        (share - 1.0).abs() < 0.01,
+        "pooled allocation shares sum to {share}, not 1"
+    );
+
+    // One shared corpus, not three private ones: the ladder fixture rewards
+    // coverage, so a shared corpus should hold more than the seed.
+    assert!(
+        report.corpus.entries > 1,
+        "shared corpus holds only {} entries",
+        report.corpus.entries
+    );
+    assert!(
+        report.coverage.total_edges > 0,
+        "pooled coverage was not merged back into the campaign"
+    );
+}
+
+/// A pooled campaign must validate a defect exactly once however many workers
+/// hit it.
+///
+/// Seeded with a near-miss - `crash_magic`'s full magic prefix with only the
+/// last gate byte wrong - so reaching the abort takes one byte flip rather
+/// than luck. Measured across five seeds, a 15-second campaign on this fixture
+/// from a blank corpus reaches the abort on roughly one seed in five, whether
+/// pooled or sequential; a test of pooled deduplication must not ride on that.
+/// Both workers will hit the same abort within the first rounds, which is
+/// exactly the race being tested.
+#[test]
+fn a_pooled_campaign_validates_each_defect_once() {
+    let scratch = Scratch::new("pool-findings");
+    let seeds = scratch.path.join("seeds");
+    std::fs::create_dir_all(&seeds).expect("seed dir");
+    // 0xDEADBEEF, 0x0203, 'Z', then a byte that is not '!'.
+    std::fs::write(
+        seeds.join("near-miss"),
+        [0xEF, 0xBE, 0xAD, 0xDE, 0x03, 0x02, b'Z', b'A'],
+    )
+    .expect("write seed");
+
+    let mut cfg = config_for("crash_magic", Build::Instrumented, &scratch.path, "");
+    cfg.campaign.workers = 2;
+    cfg.campaign.duration_secs = 0;
+    cfg.campaign.max_execs = 20_000;
+    cfg.campaign.stop_after_findings = 0;
+
+    let mut campaign = Campaign::create(cfg, Cancel::new()).expect("create");
+    campaign.seed_corpus(Some(&seeds)).expect("seed corpus");
+    let reason = campaign.run().expect("run");
+    let report = campaign.report(Some(reason)).expect("report");
+
+    assert!(
+        !report.findings.items.is_empty(),
+        "a pooled campaign found nothing one byte from the abort, after {} executions",
+        report.execution.total_executions
+    );
+    assert!(
+        report
+            .findings
+            .items
+            .iter()
+            .any(|f| f.status.is_confirmed()),
+        "the pooled campaign produced only unvalidated candidates: {:?}",
+        report
+            .findings
+            .items
+            .iter()
+            .map(|f| f.status)
+            .collect::<Vec<_>>()
+    );
+
+    // Two workers hitting the same defect must not produce two findings with
+    // the same signature: deduplication runs in the controller for exactly
+    // this reason.
+    let mut sigs: Vec<&str> = report
+        .findings
+        .items
+        .iter()
+        .map(|f| f.signature.hash.as_str())
+        .collect();
+    sigs.sort_unstable();
+    let before = sigs.len();
+    sigs.dedup();
+    assert_eq!(
+        sigs.len(),
+        before,
+        "duplicate signatures survived the controller's deduplication"
+    );
+
+    // The pool must still have run on both workers.
+    let stats = campaign.parallel_stats().expect("pool statistics");
+    assert_eq!(stats.per_worker_executions.len(), 2);
+    assert!(
+        stats.worker_failures.is_empty(),
+        "worker failures: {:?}",
+        stats.worker_failures
+    );
+}
+
+/// Cancellation has to stop a pool promptly, not after its budget runs out.
+#[test]
+fn cancelling_a_pooled_campaign_stops_every_worker() {
+    let scratch = Scratch::new("pool-cancel");
+    let mut cfg = config_for("always_ok", Build::Instrumented, &scratch.path, "");
+    cfg.campaign.workers = 3;
+    cfg.campaign.duration_secs = 0;
+    // A budget large enough that only cancellation can end the campaign.
+    cfg.campaign.max_execs = 50_000_000;
+
+    let cancel = Cancel::new();
+    let mut campaign = Campaign::create(cfg, cancel.clone()).expect("create");
+    campaign.seed_corpus(None).expect("seed");
+
+    let flag = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(600));
+        flag.cancel();
+    });
+
+    let start = Instant::now();
+    let reason = campaign.run().expect("run");
+    let elapsed = start.elapsed();
+
+    assert_eq!(reason, StopReason::Cancelled);
+    assert!(
+        elapsed < Duration::from_secs(12),
+        "pool took {elapsed:?} to stop after cancellation"
+    );
+    let stats = campaign.parallel_stats().expect("pool statistics");
+    assert!(
+        stats.executions > 0,
+        "the pool should have run before being cancelled"
+    );
+}
+
+/// The differential oracle must find the planted divergence between the two
+/// parser implementations and report it as a behavioural difference, not as a
+/// crash.
+#[test]
+fn the_differential_oracle_reports_a_real_divergence() {
+    let scratch = Scratch::new("oracle-diff");
+    let a = fixture("diff_impl_a", Build::Instrumented);
+    let b = fixture("diff_impl_b", Build::Instrumented);
+    // `+1` is accepted by B and rejected by A; `2000000` overflows in A but
+    // not in B. Both seeds sit directly on a divergence.
+    let seeds = scratch.path.join("seeds");
+    std::fs::create_dir_all(&seeds).expect("seed dir");
+    std::fs::write(seeds.join("plus"), b"+1").expect("seed");
+    std::fs::write(seeds.join("big"), b"2000000").expect("seed");
+
+    let toml = format!(
+        r#"
+schema_version = 1
+[target]
+name = "decimal_parser"
+kind = "differential"
+binary = "{}"
+differential_binary = "{}"
+timeout_ms = 1000
+[campaign]
+duration_secs = 0
+max_execs = 4000
+workers = 1
+seed = 20260124
+max_input_bytes = 256
+[feedback]
+providers = ["edge-coverage", "exit-class", "differential"]
+[oracles]
+enabled = ["differential"]
+budget_fraction = 0.5
+check_retained_only = false
+[output]
+dir = "{}"
+"#,
+        a.display(),
+        b.display(),
+        scratch.path.display()
+    );
+    let cfg = Config::from_toml_str(&toml).unwrap_or_else(|e| panic!("config: {e}"));
+    let mut campaign = Campaign::create(cfg, Cancel::new()).expect("create");
+    campaign.seed_corpus(Some(&seeds)).expect("seed corpus");
+    let reason = campaign.run().expect("run");
+    let report = campaign.report(Some(reason)).expect("report");
+
+    let diffs: Vec<_> = report
+        .findings
+        .items
+        .iter()
+        .filter(|f| f.evidence.exit_class == "oracle:differential")
+        .collect();
+    assert!(
+        !diffs.is_empty(),
+        "the differential oracle found no divergence between two implementations that \
+         demonstrably disagree, after {} executions",
+        report.execution.total_executions
+    );
+
+    let f = diffs[0];
+    // A disagreement where neither side crashed is a behavioural difference.
+    // Calling it a crash, or a vulnerability, would be inventing severity.
+    assert_eq!(
+        f.severity,
+        aether_core::evidence::Severity::BehaviouralDifference,
+        "a non-crashing disagreement must not be escalated: {}",
+        f.signature.label
+    );
+    assert_eq!(
+        f.status,
+        FindingStatus::Candidate,
+        "an oracle violation is not reproduction-validated, so it must stay a candidate"
+    );
+    assert_eq!(f.evidence.signal, None, "no signal to claim");
+    assert!(
+        f.evidence.sanitizer.is_none(),
+        "no sanitizer report to claim"
+    );
+
+    // Observed facts and possible readings must both be present and labelled.
+    assert!(
+        f.notes.iter().any(|n| n.starts_with("Observed:")),
+        "notes should record what was observed: {:?}",
+        f.notes
+    );
+    assert!(
+        f.notes
+            .iter()
+            .any(|n| n.contains("Possible reading (not established)")),
+        "notes should offer readings as unestablished: {:?}",
+        f.notes
+    );
+    assert!(
+        f.notes.iter().any(|n| n.contains("not a confirmed defect")),
+        "the finding must not read as a confirmed defect: {:?}",
+        f.notes
+    );
+    // The input that showed it is kept as evidence.
+    assert!(
+        f.input_id.is_some(),
+        "the triggering input was not retained"
+    );
+    assert!(!f.evidence.trigger_hash.is_empty());
+}
+
+/// A metamorphic relation that genuinely holds must produce no findings. This
+/// is the false-positive control for the oracle path.
+#[test]
+fn a_holding_metamorphic_relation_produces_no_findings() {
+    let scratch = Scratch::new("oracle-meta-clean");
+    let bin = fixture("always_ok", Build::Instrumented);
+    let toml = format!(
+        r#"
+schema_version = 1
+[target]
+name = "always_ok"
+kind = "executable"
+binary = "{}"
+timeout_ms = 1000
+[campaign]
+duration_secs = 0
+max_execs = 3000
+workers = 1
+seed = 20260124
+max_input_bytes = 512
+[oracles]
+enabled = ["metamorphic"]
+metamorphic_relations = ["determinism", "trailing-newline", "nul-padding"]
+budget_fraction = 0.5
+check_retained_only = false
+[output]
+dir = "{}"
+"#,
+        bin.display(),
+        scratch.path.display()
+    );
+    let cfg = Config::from_toml_str(&toml).unwrap_or_else(|e| panic!("config: {e}"));
+    let (campaign, reason) = run_campaign(cfg);
+    let report = campaign.report(Some(reason)).expect("report");
+    assert!(
+        report.findings.items.is_empty(),
+        "a target that always succeeds must not violate a relation it satisfies: {:?}",
+        report
+            .findings
+            .items
+            .iter()
+            .map(|f| f.signature.label.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Declaring a metamorphic relation without enabling the oracle must be a
+/// configuration error, not a silently skipped check.
+#[test]
+fn relations_without_the_oracle_are_refused() {
+    let scratch = Scratch::new("oracle-misconfig");
+    let bin = fixture("always_ok", Build::Instrumented);
+    let toml = format!(
+        r#"
+schema_version = 1
+[target]
+name = "always_ok"
+kind = "executable"
+binary = "{}"
+[campaign]
+duration_secs = 1
+[oracles]
+metamorphic_relations = ["determinism"]
+[output]
+dir = "{}"
+"#,
+        bin.display(),
+        scratch.path.display()
+    );
+    let err = Config::from_toml_str(&toml).expect_err("should be refused");
+    assert!(
+        err.to_string().contains("never be checked"),
+        "the error should say the relations would be ignored: {err}"
+    );
+}

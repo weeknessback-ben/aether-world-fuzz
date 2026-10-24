@@ -651,7 +651,111 @@ pub struct Config {
     #[serde(default)]
     pub optimizer: OptimizerConfig,
     #[serde(default)]
+    pub oracles: OracleConfig,
+    #[serde(default)]
     pub output: OutputConfig,
+}
+
+/// Oracles: the extra checks that turn an observation into a reason to look
+/// closer. They cost executions, so they are budgeted explicitly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OracleConfig {
+    /// Which oracles to run. Empty means none; nothing is enabled implicitly,
+    /// because every oracle spends budget that would otherwise go to
+    /// exploration.
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    /// Metamorphic relations asserted to hold for this target.
+    ///
+    /// A relation is a claim AETHER cannot verify by inspection, so none is
+    /// assumed. See `oracle::metamorphic::Relation` for each one's validity
+    /// conditions.
+    #[serde(default)]
+    pub metamorphic_relations: Vec<String>,
+    /// Share of the campaign's execution budget oracles may spend. Oracle
+    /// checks re-run the target, so an unbudgeted oracle can consume a
+    /// campaign; this caps it.
+    #[serde(default = "default_oracle_fraction")]
+    pub budget_fraction: f64,
+    /// Check only inputs the campaign retained, rather than every execution.
+    ///
+    /// On by default: a retained input is one that showed the campaign
+    /// something new, which is where an oracle check is worth an execution.
+    /// Checking every input would spend the whole allowance in seconds.
+    #[serde(default = "default_true")]
+    pub check_retained_only: bool,
+}
+
+fn default_oracle_fraction() -> f64 {
+    0.05
+}
+
+impl Default for OracleConfig {
+    fn default() -> Self {
+        OracleConfig {
+            enabled: Vec::new(),
+            metamorphic_relations: Vec::new(),
+            budget_fraction: default_oracle_fraction(),
+            check_retained_only: true,
+        }
+    }
+}
+
+impl OracleConfig {
+    fn validate(&self) -> Result<()> {
+        if !(0.0..=1.0).contains(&self.budget_fraction) {
+            return Err(Error::config(
+                "oracles.budget_fraction",
+                format!(
+                    "must be a share between 0 and 1, got {}",
+                    self.budget_fraction
+                ),
+            ));
+        }
+        // Reject unknown names here rather than at campaign start, so a typo
+        // is a configuration error and not a silently missing oracle.
+        for name in &self.enabled {
+            if !matches!(name.as_str(), "differential" | "metamorphic") {
+                return Err(Error::config(
+                    "oracles.enabled",
+                    format!("unknown oracle {name:?}; known oracles: differential, metamorphic"),
+                ));
+            }
+        }
+        // Relation names are checked here, not left to campaign creation: a
+        // typo must be a configuration error at validation time rather than a
+        // check that silently never runs.
+        for name in &self.metamorphic_relations {
+            if !matches!(
+                name.as_str(),
+                "determinism"
+                    | "trailing-newline"
+                    | "trailing-whitespace"
+                    | "self-concatenation"
+                    | "nul-padding"
+            ) {
+                return Err(Error::config(
+                    "oracles.metamorphic_relations",
+                    format!(
+                        "unknown relation {name:?}; known relations: determinism, \
+                         trailing-newline, trailing-whitespace, self-concatenation, \
+                         nul-padding"
+                    ),
+                ));
+            }
+        }
+        if !self.metamorphic_relations.is_empty()
+            && !self.enabled.iter().any(|o| o == "metamorphic")
+        {
+            return Err(Error::config(
+                "oracles.metamorphic_relations",
+                "relations are declared but the metamorphic oracle is not in \
+                 oracles.enabled, so they would never be checked",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -708,6 +812,7 @@ impl Config {
         self.scope.validate()?;
         self.intel.validate()?;
         self.reproduction.validate()?;
+        self.oracles.validate()?;
         self.output.validate()?;
 
         // Cross-field coherence: a feedback provider that depends on

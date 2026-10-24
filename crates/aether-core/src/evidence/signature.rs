@@ -134,6 +134,28 @@ fn from_signal(outcome: &ExecOutcome) -> Signature {
     }
 }
 
+/// Signature for an oracle violation.
+///
+/// Separate from [`signature_for`] because an oracle violation is not a
+/// process failure: there may be no signal, no sanitizer report and no crash
+/// at all. What identifies it is which oracle made which claim, so that is
+/// what the hash is built from - never the input, which would make every
+/// input its own finding.
+pub fn signature_for_oracle(oracle: &str, relation: &str, label: &str) -> Signature {
+    Signature {
+        hash: crate::hash::signature_hash(&["oracle", oracle, relation]),
+        label: label.to_string(),
+        parts: SignatureParts {
+            exit_class: format!("oracle:{oracle}"),
+            signal: None,
+            exit_code: None,
+            sanitizer_kind: None,
+            fault: Some(relation.to_string()),
+            frames: Vec::new(),
+        },
+    }
+}
+
 fn from_timeout() -> Signature {
     // All timeouts share one signature. A hang is a hang: distinguishing them
     // by duration would produce a new finding on every run, since the duration
@@ -164,6 +186,43 @@ fn signal_name(sig: Option<i32>) -> &'static str {
         Some(libc::SIGTRAP) => "SIGTRAP",
         Some(_) => "signal",
         None => "none",
+    }
+}
+
+#[cfg(test)]
+mod oracle_signature_tests {
+    use super::*;
+
+    #[test]
+    fn an_oracle_signature_is_stable_across_inputs() {
+        let a = signature_for_oracle("metamorphic", "trailing-newline", "relation X broke");
+        let b = signature_for_oracle(
+            "metamorphic",
+            "trailing-newline",
+            "relation X broke on a different input",
+        );
+        assert_eq!(
+            a.hash, b.hash,
+            "the hash must identify the broken claim, not the input that showed it"
+        );
+    }
+
+    #[test]
+    fn different_relations_are_different_findings() {
+        let a = signature_for_oracle("metamorphic", "trailing-newline", "x");
+        let b = signature_for_oracle("metamorphic", "nul-padding", "x");
+        let c = signature_for_oracle("differential", "trailing-newline", "x");
+        assert_ne!(a.hash, b.hash);
+        assert_ne!(a.hash, c.hash);
+    }
+
+    #[test]
+    fn an_oracle_signature_does_not_claim_a_signal_or_sanitizer_report() {
+        let s = signature_for_oracle("differential", "stdout", "outputs differ");
+        assert_eq!(s.parts.signal, None);
+        assert_eq!(s.parts.sanitizer_kind, None);
+        assert!(s.parts.frames.is_empty());
+        assert_eq!(s.parts.fault.as_deref(), Some("stdout"));
     }
 }
 

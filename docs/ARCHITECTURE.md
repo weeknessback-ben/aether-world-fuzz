@@ -87,7 +87,9 @@ hold.
 | `intel::qubo` | Experimental optimisation lab, off by default |
 | `corpus` | Content-addressed storage, ranking, retention, minimisation |
 | `evidence` | Finding lifecycle, signatures, validation, reports |
-| `runtime` | The campaign loop, checkpoints, worker abstraction |
+| `oracle` | Differential and metamorphic checks, with an execution budget |
+| `runtime` | The campaign loop, checkpoints, worker pool |
+| `runtime::parallel` | Multi-worker execution and its two-tier coverage check |
 | `persist` / `query` | SQLite schema and typed read-only access |
 | `bench` | Benchmark experiments |
 
@@ -149,6 +151,70 @@ strategies would have required a strategy that returns no candidates.
 The work is CPU-bound process supervision a few workers deep. Blocking a thread
 on `waitpid` is the natural shape; an async runtime would add a large
 dependency and a scheduler for concurrency that `fork` does not benefit from.
+
+## Multi-worker campaigns
+
+Set `campaign.workers` above one and the campaign takes a different path. The
+controller stops fuzzing: it hands the store and the corpus to a pool of worker
+threads, waits, then validates what came back.
+
+Each worker owns an executor, a coverage region, a scratch directory, its own
+strategy instances and an RNG stream derived from `(campaign_seed,
+worker_index)` — so a fixed seed still replays, and adding a worker does not
+perturb the streams the existing workers draw from. They share one lock around
+the store, the corpus and a campaign-wide coverage map.
+
+Novelty is decided in two tiers, because deciding it either way alone fails.
+Judged privately, four workers each "discover" the same edge and the corpus
+fills with four equivalent inputs. Judged under a global lock on every
+execution, the lock serialises exactly what the pool exists to parallelise. So
+a worker checks its own map first with no lock, and only a locally-interesting
+run — a small fraction of executions — takes the lock to confirm against the
+campaign-wide map. A generation counter tells a worker its local map is stale
+without comparing 64 KiB.
+
+What that design costs is measured rather than assumed:
+`ParallelStats::redundant_discoveries` counts how often two workers reached the
+same coverage before either published it, `lock_wait_micros` records
+contention, and `imbalance` shows whether one worker did most of the work. All
+three land in the report's `parallel` section.
+
+Workers do not validate failures. Reproduction re-runs an input several times,
+which would stall a worker's loop, and two workers hitting one defect would
+validate it twice. Workers report candidate failures; the controller
+deduplicates and validates each once.
+
+Two things a pooled campaign does **not** do, stated here rather than left to
+be discovered: stagnation escalation is not applied, because the detector reads
+one sequential stream of rounds and advice derived from several workers'
+interleaved rounds would not mean what it says; and remote workers do not
+exist — `WorkerTransport` defines the interface and `LocalTransport` is the
+only implementation, which `aether doctor` reports.
+
+Measured scaling on a four-core host is in [DECISIONS.md](DECISIONS.md) D16.
+
+## Oracles
+
+An oracle is not a strategy. A strategy proposes inputs; an oracle decides
+whether what happened to one is wrong. Both differential and metamorphic
+testing live here because neither generates input.
+
+Every oracle check re-runs the target, so that compute comes out of the
+campaign's budget. `oracles.budget_fraction` caps the spend, reservations are
+refunded for what a check did not use, and checks refused for want of allowance
+are counted — so a report says oracle coverage was partial rather than
+complete. By default only retained inputs are checked.
+
+**Differential** runs a second implementation and compares exit class, exit
+code and standard output. Standard error and timing are deliberately not
+compared: diagnostics differ legitimately between implementations, and a build
+flag can change them with no behavioural difference at all.
+
+**Metamorphic** applies a declared transformation and requires the exit class
+to be preserved. No relation is enabled by default — a relation is a claim
+about the target that AETHER cannot verify by inspection. See
+[DECISIONS.md](DECISIONS.md) D17 and D18 for what a violation does and does not
+claim.
 
 ## Data flow, one round
 

@@ -95,6 +95,23 @@ pub struct ArmStats {
 }
 
 impl ArmStats {
+    /// Fold another arm's statistics into this one.
+    ///
+    /// Used to aggregate a worker pool, where each worker runs its own
+    /// scheduler: the sums are additive, so the campaign-wide figures are the
+    /// real totals rather than one worker's view of them.
+    pub fn absorb(&mut self, other: &ArmStats) {
+        self.rounds = self.rounds.saturating_add(other.rounds);
+        self.executions = self.executions.saturating_add(other.executions);
+        self.productive_rounds = self
+            .productive_rounds
+            .saturating_add(other.productive_rounds);
+        self.value_sum += other.value_sum;
+        self.cost_micros = self.cost_micros.saturating_add(other.cost_micros);
+        self.new_edges = self.new_edges.saturating_add(other.new_edges);
+        self.findings = self.findings.saturating_add(other.findings);
+    }
+
     /// Mean value per millisecond of compute. The quantity being maximised.
     pub fn value_per_ms(&self) -> f64 {
         let ms = (self.cost_micros as f64 / 1000.0).max(1.0);
@@ -156,7 +173,29 @@ pub struct Scheduler {
     max_decisions: usize,
     /// Round-robin cursor.
     cursor: usize,
+    /// What the *other* workers in a pool have learned, folded into the global
+    /// prior for selection only.
+    ///
+    /// Each worker in a pooled campaign runs its own scheduler, so on its own
+    /// it sees `1/workers` of the rounds. Measured on `toy_parser`, a worker in
+    /// a four-worker 25-second campaign got about 240 rounds per arm spread
+    /// over nine contexts - too few to tell a ten-times-better arm from an
+    /// average one, so allocation stayed near uniform however good the
+    /// posterior.
+    ///
+    /// Round outcomes are cheap to share: there is one per round, not one per
+    /// execution. This holds the peers' contribution separately from
+    /// `global`, so publishing and absorbing cannot double-count a worker's
+    /// own rounds.
+    peer_global: Vec<ArmStats>,
     /// Highest per-ms value seen, used to normalise reward into [0, 1].
+    ///
+    /// Starts at zero, meaning "nothing measured yet", and is raised by the
+    /// first observation. It must **not** start at 1.0: value per millisecond
+    /// is target-dependent and on a fast target sits far below 1, so a scale
+    /// that starts at 1 and only ever rises never adapts, and every arm's
+    /// normalised magnitude stays near zero. See `thompson` for what that
+    /// cost.
     value_scale: f64,
 }
 
@@ -181,7 +220,8 @@ impl Scheduler {
             decisions: Vec::new(),
             max_decisions: 512,
             cursor: 0,
-            value_scale: 1.0,
+            peer_global: vec![ArmStats::default(); n],
+            value_scale: 0.0,
         }
     }
 
@@ -281,7 +321,16 @@ impl Scheduler {
 
             // Scale by value per millisecond, normalised against the best
             // seen so far, so the two factors are comparable.
-            let magnitude = if s.rounds == 0 {
+            //
+            // The normalisation has to be against the best *observed* rate,
+            // not a fixed constant. Value per millisecond depends entirely on
+            // the target: measured on `toy_parser` the best arm managed 0.027,
+            // so dividing by a scale of 1.0 left every magnitude near zero and
+            // the `0.25 +` floor below then flattened a 4.6x real difference
+            // into 1.06x. The scheduler became almost blind to how much an arm
+            // discovers and selected on the binary productive-or-not rate
+            // alone, which separates arms far less. See docs/DECISIONS.md D19.
+            let magnitude = if s.rounds == 0 || self.value_scale <= 0.0 {
                 // Unmeasured: assume mid-range rather than zero, or an untried
                 // arm could never win however good its Beta draw.
                 0.5
@@ -342,34 +391,78 @@ impl Scheduler {
     /// this context has little evidence of its own. A brand-new context would
     /// otherwise discard everything already learned about an arm.
     fn effective_stats(&self, ctx: Context, arm: usize) -> ArmStats {
-        match self.stats.get(&(ctx, arm)) {
-            Some(s) if s.rounds >= self.min_rounds => s.clone(),
-            Some(s) => {
-                let g = &self.global[arm];
-                // Blend: context-specific evidence plus the global prior.
-                ArmStats {
-                    rounds: s.rounds + g.rounds / 4,
-                    executions: s.executions,
-                    productive_rounds: s.productive_rounds + g.productive_rounds / 4,
-                    value_sum: s.value_sum + g.value_sum / 4.0,
-                    cost_micros: s.cost_micros + g.cost_micros / 4,
-                    new_edges: s.new_edges,
-                    findings: s.findings,
-                }
-            }
-            None => {
-                let g = &self.global[arm];
-                ArmStats {
-                    rounds: g.rounds / 4,
-                    executions: 0,
-                    productive_rounds: g.productive_rounds / 4,
-                    value_sum: g.value_sum / 4.0,
-                    cost_micros: g.cost_micros / 4,
-                    new_edges: 0,
-                    findings: 0,
-                }
-            }
+        // The prior is this worker's own history plus whatever its peers have
+        // published. In a single-worker campaign the peer term is empty and
+        // this is exactly the global prior.
+        let mut prior = self.global[arm].clone();
+        prior.absorb(&self.peer_global[arm]);
+
+        // Always blend context-specific evidence with the discounted prior -
+        // never switch to context-only evidence.
+        //
+        // This used to switch: once a `(context, arm)` cell had `min_rounds`
+        // rounds it was used alone and the prior was discarded. With 36
+        // possible contexts that is far too early. Measured on `toy_parser`,
+        // a worker's cells held about 25 rounds each at a roughly 2% rate of
+        // productive rounds, so a cell saw zero or one productive round -
+        // noise - and every other context's evidence, and every peer
+        // worker's, was thrown away. The prior is a shrinkage term, which is
+        // what a contextual bandit with sparse per-context data needs.
+        //
+        // The prior is discounted to a quarter because evidence from other
+        // contexts is weaker evidence about this one. It includes this
+        // context's own rounds, so those count 1.25 times rather than once;
+        // that is a property of using the global total as a shrinkage prior
+        // and does not change the ordering between arms.
+        let s = self.stats.get(&(ctx, arm)).cloned().unwrap_or_default();
+        ArmStats {
+            rounds: s.rounds + prior.rounds / 4,
+            executions: s.executions,
+            productive_rounds: s.productive_rounds + prior.productive_rounds / 4,
+            value_sum: s.value_sum + prior.value_sum / 4.0,
+            cost_micros: s.cost_micros + prior.cost_micros / 4,
+            new_edges: s.new_edges,
+            findings: s.findings,
         }
+    }
+
+    /// This worker's own per-arm totals, for publishing to a pool.
+    pub fn global_totals(&self) -> &[ArmStats] {
+        &self.global
+    }
+
+    /// Adopt the pool's totals as the peer prior.
+    ///
+    /// `pool` is the sum of every worker's totals, this one included, so this
+    /// worker's own contribution is subtracted out - otherwise its rounds
+    /// would be counted twice and the posterior would be more confident than
+    /// the evidence supports. The pool's best observed value rate is adopted
+    /// too, so one worker finding a high-value arm fixes the normalisation for
+    /// all of them at once.
+    pub fn absorb_pool_totals(&mut self, pool: &[ArmStats], pool_value_scale: f64) {
+        for (i, total) in pool.iter().enumerate().take(self.peer_global.len()) {
+            let own = &self.global[i];
+            self.peer_global[i] = ArmStats {
+                rounds: total.rounds.saturating_sub(own.rounds),
+                executions: total.executions.saturating_sub(own.executions),
+                productive_rounds: total
+                    .productive_rounds
+                    .saturating_sub(own.productive_rounds),
+                value_sum: (total.value_sum - own.value_sum).max(0.0),
+                cost_micros: total.cost_micros.saturating_sub(own.cost_micros),
+                new_edges: total.new_edges.saturating_sub(own.new_edges),
+                findings: total.findings.saturating_sub(own.findings),
+            };
+        }
+        if pool_value_scale > self.value_scale {
+            self.value_scale = pool_value_scale;
+        }
+    }
+
+    /// Highest value-per-millisecond this scheduler has observed, for a pool
+    /// to share. Zero means nothing measured yet.
+    pub fn value_scale(&self) -> f64 {
+        self.value_scale
     }
 
     fn record(&mut self, ctx: Context, arm: usize, scores: Vec<(String, f64)>, reason: &str) {
@@ -469,6 +562,98 @@ mod tests {
 
     fn sched(kind: SchedulerKind) -> Scheduler {
         Scheduler::new(kind, arms(), 32, 2, 0.0)
+    }
+
+    /// The scheduler must exploit an arm that is genuinely better, and must do
+    /// so at the *absolute* value rates a real target produces.
+    ///
+    /// This is a regression test for a measured defect: `value_scale` was
+    /// initialised to 1.0 and only ever raised, so on a target whose best
+    /// value per millisecond was 0.027 the normalisation never adapted. Every
+    /// arm's magnitude term stayed near zero, the `0.25 +` floor flattened a
+    /// 4.6x real difference into 1.06x, and over 4000 rounds the best arm's
+    /// share fell to 0.05 - worse than uniform. The scale is now set by the
+    /// first observation, and this test fails if it is ever pinned again.
+    #[test]
+    fn thompson_exploits_the_better_arm_at_realistic_value_rates() {
+        // Deliberately small: these are the magnitudes a fast target gives,
+        // and they are what the old normalisation could not see.
+        const SCALE: f64 = 0.001;
+        let mut s = Scheduler::new(SchedulerKind::Thompson, arms(), 64, 2, 0.0);
+        let mut rng = Rng::from_seed(20260124);
+        let ctx = Context {
+            progress: 0,
+            corpus: 1,
+            saturation: 1,
+        };
+        let mut picks = [0u32; 3];
+
+        for _ in 0..4000 {
+            let arm = s.select(ctx, &mut rng);
+            picks[arm] += 1;
+            // Arm 0 is worth ten times arm 1 and arm 2 per unit of compute,
+            // at the same cost and the same chance of being productive.
+            let productive = rng.below(100) < 20;
+            let value = if productive {
+                match arm {
+                    0 => 10.0 * SCALE,
+                    _ => 1.0 * SCALE,
+                }
+            } else {
+                0.0
+            };
+            s.update(
+                ctx,
+                arm,
+                RoundOutcome {
+                    executions: 64,
+                    value,
+                    cost_micros: 20_000,
+                    new_edges: u64::from(productive),
+                    findings: 0,
+                },
+            );
+        }
+
+        let total: u32 = picks.iter().sum();
+        let best = f64::from(picks[0]) / f64::from(total);
+        assert!(
+            best > 0.5,
+            "the ten-times-better arm took only {best:.2} of rounds; the scheduler is not              exploiting it (shares: {:?})",
+            picks.map(|p| f64::from(p) / f64::from(total))
+        );
+        // Exploitation must not become starvation: the others still get tried.
+        assert!(
+            picks[1] > 0 && picks[2] > 0,
+            "no arm may be starved entirely: {picks:?}"
+        );
+    }
+
+    #[test]
+    fn the_value_scale_adapts_to_the_target_rather_than_assuming_one() {
+        let mut s = Scheduler::new(SchedulerKind::Thompson, arms(), 64, 1, 0.0);
+        let ctx = Context::initial();
+        assert_eq!(
+            s.value_scale, 0.0,
+            "nothing is measured yet, which is not the same as a scale of one"
+        );
+        s.update(
+            ctx,
+            0,
+            RoundOutcome {
+                executions: 64,
+                value: 0.05,
+                cost_micros: 10_000,
+                new_edges: 1,
+                findings: 0,
+            },
+        );
+        // 0.05 over 10 ms is 0.005 per ms. The scale must now be that, not 1.0.
+        assert!(
+            (s.value_scale - 0.005).abs() < 1e-9,
+            "scale should follow the observed rate, got {}",
+            s.value_scale
+        );
     }
 
     /// Reward profile: arm 0 is productive and cheap, arm 1 finds nothing,

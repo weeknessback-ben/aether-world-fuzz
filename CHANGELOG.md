@@ -5,6 +5,54 @@ Versioning is [semantic](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-worker campaigns.** `campaign.workers` above one now runs a real pool
+  of worker threads sharing one corpus and one coverage map, instead of being
+  accepted and ignored. Novelty is judged in two tiers so the common path takes
+  no lock; redundancy, lock wait and per-worker load are measured and reported.
+  Remote workers remain unimplemented and `aether doctor` says so.
+  (docs/DECISIONS.md D14)
+- **Benchmark experiment G**, worker scaling across 1, 2 and 4 workers. On a
+  four-core host throughput scaled 2.21× and 4.15×; coverage did not move on a
+  fixture that saturates immediately. The experiment explains why a per-worker
+  efficiency above 1.0 is a property of the baseline rather than a speedup.
+  (D16)
+- **Oracles** as a first-class module. A differential oracle comparing two
+  implementations on exit class, exit code and standard output; a metamorphic
+  oracle checking declared input transformations. Both are budgeted as a share
+  of the campaign's executions, and oracle violations are recorded as
+  candidates with observed facts separated from possible readings — never as
+  confirmed defects or security claims. (D17, D18)
+- `aether doctor` now reports the local worker pool, the host's core count and
+  both oracles with their requirements.
+- `aether_campaign_start` (MCP) accepts `workers`.
+
+### Fixed
+
+- **The bandit scheduler was barely better than uniform allocation.** Two
+  defects, both found by reading a real campaign's own report, where the
+  strategy that found 40 of 44 new edges received the smallest share of the
+  budget:
+  - `value_scale` was initialised to 1.0 and only ever raised, so on any target
+    whose value-per-millisecond sits below 1 the reward normalisation never
+    adapted and a 4.6× difference in value rate was flattened to 1.06×.
+  - `effective_stats` discarded the global prior once a `(context, arm)` cell
+    had three rounds, leaving selection to run on ~25 noisy rounds per cell and
+    throwing away every other context's and every peer worker's evidence.
+
+  Share given to a ten-times-better arm, mean of 7 seeds, 4000 rounds across 9
+  contexts: **0.32 → 0.55** (uniform is 0.25). On real campaigns the
+  comparison-guided strategy's share went from 0.19 to 0.34–0.36 with
+  throughput unchanged. Total coverage did not improve on the fixture tested,
+  which saturates its reachable coverage — stated rather than implied. (D19)
+- Pooled workers share per-arm round statistics, so each schedules on all the
+  workers' evidence rather than its own slice. One lock per round, measured at
+  0.26 s of 100 worker-seconds. (D20)
+- Strategy statistics are persisted on the status timer rather than once per
+  round. Measured no throughput difference; kept as a simplification, not as a
+  speedup. (D15)
+
 ## [0.1.0] — 2026-10-24
 
 First working version. The engine runs campaigns end to end against real

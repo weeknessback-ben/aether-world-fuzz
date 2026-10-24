@@ -63,6 +63,31 @@ pub fn doctor(ctx: &Ctx) -> Result<u8> {
             "backends": adapters,
             "limits": limits,
             "distributed": { "available": distributed, "reason": distributed_reason },
+            "workers": {
+                "local_pool": true,
+                "max_useful": cores,
+                "note": "Workers are threads in one process. More workers than cores \
+                         measures oversubscription, not scaling."
+            },
+            "oracles": {
+                "differential": {
+                    "available": true,
+                    "requires": "target.kind = \"differential\" and \
+                                 target.differential_binary"
+                },
+                "metamorphic": {
+                    "available": true,
+                    "relations": [
+                        "determinism",
+                        "trailing-newline",
+                        "trailing-whitespace",
+                        "self-concatenation",
+                        "nul-padding"
+                    ],
+                    "note": "No relation is enabled by default: a relation is a claim \
+                             about the target that AETHER cannot verify by inspection."
+                }
+            },
             "strategies": aether_core::strategy::ALL_STRATEGY_IDS,
             "profiles": config::PROFILE_NAMES,
             "schema_version": config::SCHEMA_VERSION,
@@ -131,6 +156,26 @@ pub fn doctor(ctx: &Ctx) -> Result<u8> {
     if !distributed {
         println!("  {distributed_reason}");
     }
+    println!(
+        "Local worker pool: available, {} logical core{} on this host",
+        cores,
+        if cores == 1 { "" } else { "s" }
+    );
+    println!("  More workers than cores measures oversubscription, not scaling.");
+    println!();
+    println!("Oracles:");
+    println!(
+        "  differential  needs target.kind = \"differential\" and \
+         target.differential_binary"
+    );
+    println!(
+        "  metamorphic   relations: determinism, trailing-newline, trailing-whitespace, \
+         self-concatenation, nul-padding"
+    );
+    println!(
+        "                none is enabled by default; a relation is a claim about your \
+         target that AETHER cannot verify"
+    );
     println!();
     println!(
         "Strategies: {}",
