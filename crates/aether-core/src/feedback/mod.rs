@@ -39,6 +39,9 @@ pub struct Feedback {
     pub invariant_violated: Option<String>,
     /// Execution cost, used as the denominator of strategy utility.
     pub cost_micros: u64,
+    /// Response status codes the target emitted, in order. Empty for a target
+    /// that does not answer with status codes.
+    pub response_codes: Vec<u32>,
 }
 
 impl Feedback {
@@ -193,9 +196,13 @@ impl FeedbackEngine {
         let mut weighted_sum = 0.0;
         let mut weight_total = 0.0;
         let mut invariant_violated = None;
+        let mut response_codes = Vec::new();
 
         for p in self.providers.iter_mut() {
             let r = p.observe(&obs);
+            if response_codes.is_empty() && !r.response_codes.is_empty() {
+                response_codes = r.response_codes.clone();
+            }
             let w = self.weights.get(p.id()).copied().unwrap_or(1.0).max(0.0);
             components.insert(p.id().to_string(), r.novelty);
             weighted_sum += r.novelty * w;
@@ -221,6 +228,7 @@ impl FeedbackEngine {
             components,
             invariant_violated,
             cost_micros: outcome.duration.as_micros().min(u64::MAX as u128) as u64,
+            response_codes,
         }
     }
 

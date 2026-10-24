@@ -160,7 +160,7 @@ impl StatefulSequence {
     }
 
     /// Parse leading three-digit status codes from a response.
-    fn parse_codes(output: &[u8]) -> Vec<u32> {
+    pub fn parse_codes(output: &[u8]) -> Vec<u32> {
         String::from_utf8_lossy(output)
             .lines()
             .filter_map(|l| {
@@ -280,15 +280,17 @@ impl Strategy for StatefulSequence {
             if steps.is_empty() {
                 continue;
             }
-            // Response codes are carried as a state-transition signal by the
-            // feedback engine; where they are absent, fall back to treating a
-            // retained result as progress on the whole sequence.
-            let transitions = r
-                .feedback
-                .components
-                .get("state-transition")
-                .copied()
-                .unwrap_or(0.0);
+            // Prefer the target's own status codes: they say which specific
+            // steps were accepted, where a retained flag only says the whole
+            // sequence was interesting.
+            if !r.feedback.response_codes.is_empty() {
+                self.learn_from_codes(&steps, &r.feedback.response_codes);
+                continue;
+            }
+            // No status codes available (a target that does not answer that
+            // way): fall back to crediting the sequence as a whole.
+            let transitions =
+                r.feedback.components.get("state-transition").copied().unwrap_or(0.0);
             if transitions > 0.0 || r.retained {
                 for pair in steps.windows(2) {
                     *self.accepted_pairs.entry((pair[0], pair[1])).or_insert(0) += 1;
@@ -510,6 +512,29 @@ mod tests {
             );
             assert!(c.parent.is_some());
         }
+    }
+
+    #[test]
+    fn observe_prefers_real_status_codes_over_the_retained_flag() {
+        // The target answered 230 (accepted), 250 (accepted), 550 (rejected),
+        // so only the first transition should be learned - even though the
+        // result was retained, which the fallback would have credited wholly.
+        let params = BTreeMap::new();
+        let dict: Vec<Vec<u8>> = Vec::new();
+        let mut s = built(&params, &dict);
+        let mut fb = crate::feedback::Feedback::default();
+        fb.response_codes = vec![230, 250, 550];
+        s.observe(&[CandidateResult {
+            note: "sequence:0,1,2".into(),
+            feedback: fb,
+            retained: true,
+        }]);
+        assert!(s.accepted_pairs.contains_key(&(0, 1)), "{:?}", s.accepted_pairs);
+        assert!(
+            !s.accepted_pairs.contains_key(&(1, 2)),
+            "credited a transition the target rejected: {:?}",
+            s.accepted_pairs
+        );
     }
 
     #[test]

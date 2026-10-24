@@ -196,3 +196,84 @@ would have put the comparison logic on the wrong side of the interface.
 collision risk, and it halves the index and path length against a full 256-bit
 digest. Hashes that arrive from outside the process are validated as plain
 lowercase hex before they are used to build a path.
+
+---
+
+## D13. Quantum-inspired optimisation: measured, tuned, and not made the default
+
+**Decision.** The optimisation lab ships with three stochastic solvers beside a
+classical greedy baseline. Greedy remains the default. The quantum-inspired
+solvers are retained as a research capability with their measurements attached,
+and the module stays off unless explicitly enabled.
+
+**What was built.** Corpus subset selection and strategy budget allocation are
+reduced to QUBO (derivation in `intel::qubo`'s module documentation). Four
+solvers run against it: greedy, simulated annealing, a quantum-inspired
+evolutionary algorithm (QIEA, probability-amplitude registers with rotation
+gates, after Han and Kim 2002), and discrete-time simulated quantum annealing
+(SQA, Trotter replicas coupled through a transverse field).
+
+**Hyperparameters were swept, not guessed** (`tests/optimizer_tuning.rs`, 25 ms
+budget, three instance families, objective relative to greedy):
+
+| Solver | Best configuration found | Mean ratio |
+| --- | --- | --- |
+| Simulated annealing | 800 sweeps, 16 restarts, T0 = 50 | 0.921 |
+| QIEA | population 8, theta = 0.05 pi, catastrophe 0.05 | **0.973** |
+| SQA | 32 Trotter slices, gamma0 = 3, T = 2 | 0.917 |
+
+Two findings worth keeping from the sweeps:
+
+* **QIEA's catastrophe operator is decisive.** Without it, a large rotation
+  angle collapses the population into one basin and quality falls to 0.78 of
+  greedy; with it, every angle tested stays near 0.96.
+* **SQA improves monotonically with Trotter count** (0.80 at P = 2 up to 0.92
+  at P = 32), which is the expected tunnelling behaviour - but a sweep costs P
+  times as much, so at a fixed budget it is a trade-off rather than a gain.
+
+**Experiment F, against exhaustive ground truth** (n = 16, k = 5, 24 instances):
+
+| Solver | Mean fraction of optimum | Worst | Reached optimum |
+| --- | --- | --- | --- |
+| greedy | **0.9985** | 0.9881 | 21/24 |
+| QIEA | 0.9792 | 0.8876 | 14/24 |
+| simulated annealing | 0.9743 | 0.8941 | 10/24 |
+| SQA | 0.9461 | 0.8764 | 0/24 |
+
+**At equal wall-clock budget** (n = 60, k = 15, objective relative to greedy):
+
+| Budget | Simulated annealing | QIEA | SQA |
+| --- | --- | --- | --- |
+| 5 ms | 0.906 | **0.955** | 0.890 |
+| 25 ms | 0.919 | **0.956** | 0.907 |
+| 100 ms | 0.922 | **0.958** | 0.920 |
+
+And on budget allocation, a differently shaped objective with no submodularity
+for greedy to exploit: QIEA 0.984, simulated annealing 0.968, SQA 0.932 - still
+below greedy.
+
+**Conclusions, stated as the evidence supports them.**
+
+1. **Greedy wins on both problems.** Max-coverage is submodular, so greedy
+   carries a proven `1 - 1/e` approximation bound, and in practice it reached
+   99.85% of the optimum. Nothing here beats it, so nothing here displaces it.
+2. **QIEA consistently beats classical simulated annealing** - its direct
+   classical analogue, both being stochastic search over the same QUBO - by
+   roughly four percentage points at every budget tested, and on both problem
+   shapes. That is the one positive result in this module, and it is a
+   comparison between two classical algorithms.
+3. **SQA is the weakest of the three** and never reached the optimum on any
+   ground-truth instance. The cost of replication is not repaid at these sizes.
+4. **More budget barely helps.** All three are within a few points of their
+   asymptote by 25 ms, so the gap to greedy is not a budget artefact.
+
+**What is deliberately not claimed.** No quantum speedup, and no quantum
+computation: every solver here runs on a classical CPU, and "quantum-inspired"
+describes where the algorithm's structure was borrowed from, nothing more. A
+real quantum annealer would implement the same `Solver` trait, but none is
+available on this host, so no such adapter is claimed to work.
+
+**Why it is kept.** The lab answers its research question with evidence, the
+QIEA-versus-annealing result is a genuine finding, and the interface is the
+right place for a hardware adapter should one become available. It costs
+nothing when disabled, which is its default state.

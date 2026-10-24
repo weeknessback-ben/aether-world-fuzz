@@ -22,6 +22,7 @@ pub mod strategy;
 pub mod error;
 pub mod hash;
 pub mod ids;
+pub mod intel;
 pub mod rng;
 pub mod scope;
 pub mod time;

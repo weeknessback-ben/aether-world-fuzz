@@ -62,6 +62,10 @@ pub struct ProviderOutcome {
     /// A declared invariant was violated. This is a candidate finding even
     /// when the process exited cleanly.
     pub invariant_violated: Option<String>,
+    /// Response status codes parsed from the target's output, in order.
+    /// Carried through so the stateful strategy can learn which command
+    /// transitions were accepted without parsing the output a second time.
+    pub response_codes: Vec<u32>,
 }
 
 impl ProviderOutcome {
@@ -134,6 +138,7 @@ impl SemanticProvider for ExitClassProvider {
             novelty: if novel { 1.0 } else { 0.0 },
             signals: vec![("distinct_exit_classes".into(), self.seen.len() as f64)],
             invariant_violated: None,
+            response_codes: Vec::new(),
         }
     }
 }
@@ -252,6 +257,7 @@ impl SemanticProvider for StateTransitionProvider {
                 ("sequence_length".into(), codes.len() as f64),
             ],
             invariant_violated: None,
+            response_codes: codes,
         }
     }
 }
@@ -348,6 +354,7 @@ impl SemanticProvider for InvariantProvider {
                     novelty: if first { 1.0 } else { 0.0 },
                     signals: vec![("invariants_violated".into(), self.violated.len() as f64)],
                     invariant_violated: Some(inv.name.clone()),
+                    response_codes: Vec::new(),
                 };
             }
         }
