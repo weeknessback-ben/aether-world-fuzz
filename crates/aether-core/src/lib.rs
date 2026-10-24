@@ -14,7 +14,11 @@
 //! the campaign loop.
 
 pub mod config;
+pub mod corpus;
 pub mod exec;
+pub mod feedback;
+pub mod persist;
+pub mod strategy;
 pub mod error;
 pub mod hash;
 pub mod ids;
